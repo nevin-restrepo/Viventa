@@ -8,7 +8,7 @@ import plotly.express as px
 st.set_page_config(page_title="Dashboard & Simulador Viventa", layout="wide")
 
 # Constantes generales
-TASA_USD = 3800.0   # para histórico y simulador
+TASA_USD = 3800.0   # para histórico y simulador (TRM)
 TASA_EUR = 4424.0
 TARIFA_SV_USD = 400.0  # valor estándar de una SV en el simulador
 
@@ -178,7 +178,6 @@ def build_dashboard():
 # ---------------------------------------------------
 # MÓDULO 2: SIMULADOR VIVENTA 2025
 # ---------------------------------------------------
-
 # Tramos SV:
 # 0–8 SV   -> 0%
 # 9–11 SV  -> 8%
@@ -198,14 +197,16 @@ def get_pct_sv(num_sv: int) -> float:
 
 def calcular_comision_sv(num_sv: int, descuento: float, trm: float):
     """
-    Calcula la comisión total de SV en COP con:
-    - Tarifa estándar SV: 400 USD (TARIFA_SV_USD)
-    - descuento: 0.0 a 0.5
-    - trm: COP por USD
+    Calcula la comisión total de SV en COP.
 
-    Fórmula:
-    comision_por_sv = (tarifa_neta_usd * trm) * pct_según_tramo
-    comision_total = comision_por_sv * num_sv
+    Tarifa base: 400 USD (TARIFA_SV_USD)
+    Descuento: proporción (0.0 a 0.5)
+    TRM: COP por USD
+
+    valor_sv_neto_usd = 400 * (1 - descuento)
+    valor_sv_neto_cop = valor_sv_neto_usd * trm
+    comisión_por_sv_cop = valor_sv_neto_cop * pct (según tramo)
+    comisión_total_cop = comisión_por_sv_cop * num_sv
     """
     pct = get_pct_sv(num_sv)
     valor_sv_neto_usd = TARIFA_SV_USD * (1.0 - descuento)
@@ -240,9 +241,13 @@ def build_simulador():
 
     st.write(
         """
-        Tarifa estándar SV: **400 USD**  
-        TRM usada en la simulación: **3.800 COP/USD**  
-        La comisión SV depende del número total de SV facturados.
+        **Servicio Viventa (SV)**  
+        - Tarifa estándar: **400 USD**  
+        - TRM usada: **3.800 COP/USD**  
+        - Descuento se aplica sobre los 400 USD.  
+        - El número de SV determina el tramo de comisión.
+
+        **Vivecasa + fijo + bono** se suman al variable SV para el total mensual.
         """
     )
 
@@ -250,17 +255,18 @@ def build_simulador():
     st.sidebar.markdown("---")
     st.sidebar.subheader("Parámetros del simulador")
 
+    # SV
     num_sv = st.sidebar.number_input(
         "SV facturados",
         min_value=0,
         max_value=200,
-        value=10,
+        value=0,   # inicia en 0
         step=1,
         key="num_sv",
     )
 
     descuento = st.sidebar.slider(
-        "Descuento promedio SV (%)",
+        "Descuento promedio SV (0 a 50%)",
         min_value=0.0,
         max_value=0.50,
         value=0.0,
@@ -268,11 +274,12 @@ def build_simulador():
         key="desc_sv",
     )
 
+    # Vivecasa
     num_vivecasas = st.sidebar.number_input(
         "Vivecasas cerradas",
         min_value=0,
         max_value=200,
-        value=5,
+        value=0,   # inicia en 0
         step=1,
         key="num_vc",
     )
@@ -291,38 +298,39 @@ def build_simulador():
         comision_fija_cop = st.sidebar.number_input(
             "Comisión fija por Vivecasa (COP)",
             min_value=0.0,
-            value=2_000_000.0,
+            value=0.0,   # inicia en 0
             step=100_000.0,
             key="vc_fija",
         )
     else:
         tarifa_vivecasa_cop = st.sidebar.number_input(
             "Tarifa promedio Vivecasa (COP)",
-            min_value=5_000_000.0,
-            value=15_000_000.0,
+            min_value=0.0,
+            value=0.0,   # inicia en 0
             step=500_000.0,
             key="vc_tarifa",
         )
         pct_vivecasa = st.sidebar.slider(
-            "% comisión Vivecasa",
+            "% comisión Vivecasa (0 a 20%)",
             min_value=0.0,
             max_value=0.20,
-            value=0.05,
+            value=0.0,   # inicia en 0
             step=0.01,
             key="vc_pct",
         )
 
+    # Fijo y bono
     fijo_mensual = st.sidebar.number_input(
         "Fijo mensual (COP)",
         min_value=0.0,
-        value=4_000_000.0,
+        value=0.0,    # inicia en 0
         step=100_000.0,
         key="fijo",
     )
     bono_mensual = st.sidebar.number_input(
         "Bono mensual (COP)",
         min_value=0.0,
-        value=500_000.0,
+        value=0.0,    # inicia en 0
         step=50_000.0,
         key="bono",
     )
