@@ -8,7 +8,7 @@ import plotly.express as px
 st.set_page_config(page_title="Dashboard & Simulador Viventa", layout="wide")
 
 # Constantes generales
-TASA_USD = 3800.0   # para histórico y simulador (TRM)
+TASA_USD = 3800.0   # TRM usada para histórico y simulador
 TASA_EUR = 4424.0
 TARIFA_SV_USD = 400.0  # valor estándar de una SV en el simulador
 
@@ -185,6 +185,7 @@ def build_dashboard():
 # 17+ SV   -> 25%
 
 def get_pct_sv(num_sv: int) -> float:
+    """Devuelve el % de comisión según el número de SV facturadas."""
     if num_sv <= 8:
         return 0.0
     elif num_sv <= 11:
@@ -197,25 +198,23 @@ def get_pct_sv(num_sv: int) -> float:
 
 def calcular_comision_sv(num_sv: int, descuento: float, trm: float):
     """
-    Calcula la comisión total de SV en COP.
+    Comisión SV en el simulador:
 
-    Tarifa base: 400 USD (TARIFA_SV_USD)
-    Descuento: proporción (0.0 a 0.5)
-    TRM: COP por USD
+    - La cantidad de SV **solo** define el % de comisión (tramo).
+    - La base es: 400 USD - descuento.
+    - Fórmula en COP:
+        valor_sv_neto_usd = 400 * (1 - descuento)
+        valor_sv_neto_cop = valor_sv_neto_usd * trm
+        comisión_SV = valor_sv_neto_cop * %comisión
 
-    valor_sv_neto_usd = 400 * (1 - descuento)
-    valor_sv_neto_cop = valor_sv_neto_usd * trm
-    comisión_por_sv_cop = valor_sv_neto_cop * pct (según tramo)
-    comisión_total_cop = comisión_por_sv_cop * num_sv
+    ❗ No se multiplica por la cantidad de SV.
     """
     pct = get_pct_sv(num_sv)
     valor_sv_neto_usd = TARIFA_SV_USD * (1.0 - descuento)
     valor_sv_neto_cop = valor_sv_neto_usd * trm
 
-    comision_por_sv_cop = valor_sv_neto_cop * pct
-    comision_total = comision_por_sv_cop * num_sv
-
-    return comision_total, pct, valor_sv_neto_cop, comision_por_sv_cop
+    comision_total = valor_sv_neto_cop * pct
+    return comision_total, pct, valor_sv_neto_cop
 
 
 def calcular_comision_vivecasa(
@@ -225,6 +224,7 @@ def calcular_comision_vivecasa(
     tarifa_vivecasa_cop=None,
     pct_vivecasa=None,
 ):
+    """Calcula la comisión por Vivecasas según el esquema elegido."""
     if num_vivecasas <= 0:
         return 0.0
 
@@ -241,13 +241,16 @@ def build_simulador():
 
     st.write(
         """
-        **Servicio Viventa (SV)**  
-        - Tarifa estándar: **400 USD**  
-        - TRM usada: **3.800 COP/USD**  
-        - Descuento se aplica sobre los 400 USD.  
-        - El número de SV determina el tramo de comisión.
+        ### Reglas del simulador – Servicio Viventa (SV)
 
-        **Vivecasa + fijo + bono** se suman al variable SV para el total mensual.
+        - Tarifa estándar SV: **400 USD**  
+        - TRM usada: **3.800 COP/USD**  
+        - El **descuento** se aplica al precio de 400 USD.  
+        - La **cantidad de SV solo determina el tramo de comisión (%), NO multiplica la fórmula.**
+
+        Fórmula de la comisión SV:
+
+        > Comisión SV mensual = 400 × (1 − descuento) × %comisión × TRM
         """
     )
 
@@ -336,7 +339,7 @@ def build_simulador():
     )
 
     # -------- CÁLCULOS ----------
-    com_sv_total, pct_sv, valor_sv_neto_cop, comision_por_sv = calcular_comision_sv(
+    com_sv_total, pct_sv, valor_sv_neto_cop = calcular_comision_sv(
         num_sv=num_sv,
         descuento=descuento,
         trm=TASA_USD,   # 3.800
@@ -368,11 +371,11 @@ def build_simulador():
 
     detalle = pd.DataFrame({
         "Concepto": [
-            "SV facturados",
+            "SV facturados (solo define tramo)",
+            "Descuento promedio SV",
             "% comisión SV según tramo",
-            "Tarifa neta por SV (COP)",
-            "Comisión por SV (COP)",
-            "Comisión total SV (COP)",
+            "Tarifa neta SV (COP)",
+            "Comisión SV mensual (COP)",
             "Vivecasas cerradas",
             "Comisión total Vivecasa (COP)",
             "Fijo (COP)",
@@ -382,9 +385,9 @@ def build_simulador():
         ],
         "Valor": [
             num_sv,
+            f"{descuento * 100:.1f} %",
             f"{pct_sv * 100:.1f} %",
             f"{valor_sv_neto_cop:,.0f}",
-            f"{comision_por_sv:,.0f}",
             f"{com_sv_total:,.0f}",
             num_vivecasas,
             f"{com_vc_total:,.0f}",
