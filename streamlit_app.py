@@ -38,7 +38,7 @@ def load_data():
 # ---------------------------------------------------
 # FUNCIONES COMUNES DE MONEDA
 # ---------------------------------------------------
-def convertir_desde_cop(valor_cop: float, moneda: str) -> float:
+def convertir_desde_cop(valor_cop, moneda):
     """Convierte un valor en COP a la moneda seleccionada."""
     if moneda == "COP":
         return valor_cop
@@ -49,7 +49,7 @@ def convertir_desde_cop(valor_cop: float, moneda: str) -> float:
     return valor_cop
 
 
-def formato_moneda(valor: float, moneda: str) -> str:
+def formato_moneda(valor, moneda):
     """Devuelve un string formateado con la moneda."""
     if moneda == "COP":
         return f"${valor:,.0f} COP"
@@ -220,9 +220,9 @@ def calcular_comision_sv(num_sv: int, descuento: float, trm: float):
 def calcular_comision_vivecasa(
     num_vivecasas: int,
     tipo_esquema: str,
-    comision_fija_cop: float | None = None,
-    tarifa_vivecasa_cop: float | None = None,
-    pct_vivecasa: float | None = None,
+    comision_fija_cop=None,
+    tarifa_vivecasa_cop=None,
+    pct_vivecasa=None,
 ):
     if num_vivecasas <= 0:
         return 0.0
@@ -331,7 +331,7 @@ def build_simulador():
     com_sv_total, pct_sv, valor_sv_neto_cop, comision_por_sv = calcular_comision_sv(
         num_sv=num_sv,
         descuento=descuento,
-        trm=3800,
+        trm=TASA_USD,   # 3.800
     )
 
     com_vc_total = calcular_comision_vivecasa(
@@ -405,3 +405,26 @@ def build_simulador():
     )
     fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
     st.plotly_chart(fig, use_container_width=True)
+
+
+# ---------------------------------------------------
+# MAIN
+# ---------------------------------------------------
+def main():
+    st.title("Viventa – Dashboard & Simulador de Compensación 2025")
+
+    modo = st.sidebar.radio(
+        "¿Qué quieres usar?",
+        ["Dashboard histórico", "Simulador 2025"],
+        index=0,
+        key="modo_app",
+    )
+
+    if modo == "Dashboard histórico":
+        build_dashboard()
+    else:
+        build_simulador()
+
+
+if __name__ == "__main__":
+    main()
