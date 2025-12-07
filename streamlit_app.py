@@ -7,6 +7,11 @@ import plotly.express as px
 # ---------------------------------------------------
 st.set_page_config(page_title="Dashboard & Simulador Viventa", layout="wide")
 
+# Constantes generales
+TASA_USD = 3800.0   # para histórico y simulador
+TASA_EUR = 4424.0
+TARIFA_SV_USD = 400.0  # valor estándar de una SV en el simulador
+
 
 # ---------------------------------------------------
 # CARGA DE DATOS HISTÓRICOS (DASHBOARD)
@@ -33,10 +38,6 @@ def load_data():
 # ---------------------------------------------------
 # FUNCIONES COMUNES DE MONEDA
 # ---------------------------------------------------
-TASA_USD = 3800.0   # 1 USD = 3.800 COP
-TASA_EUR = 4424.0   # 1 EUR = 4.424 COP
-
-
 def convertir_desde_cop(valor_cop: float, moneda: str) -> float:
     """Convierte un valor en COP a la moneda seleccionada."""
     if moneda == "COP":
@@ -179,27 +180,36 @@ def build_dashboard():
 # ---------------------------------------------------
 # --- Reglas de SV ---
 def get_pct_sv(num_sv: int) -> float:
-    """Devuelve el % de comisión SV según el número de SV."""
-    if num_sv <= 7:
+    """
+    Devuelve el % de comisión SV según el número de SV:
+    0 a 8   -> 0%
+    9 a 11  -> 8%
+    12 a 16 -> 18%
+    17 o más -> 25%
+    """
+    if num_sv <= 8:
         return 0.0
-    elif num_sv <= 10:
-        return 0.10
-    elif num_sv <= 15:
+    elif num_sv <= 11:
+        return 0.08
+    elif num_sv <= 16:
         return 0.18
     else:
         return 0.25
 
 
-def calcular_comision_sv(num_sv: int, tarifa_sv_usd: float, descuento: float, trm: float):
+def calcular_comision_sv(num_sv: int, descuento: float, trm: float):
     """
-    Calcula la comisión total de SV en COP.
+    Calcula la comisión total de SV en COP con:
+    - Tarifa estándar SV: 400 USD
+    - descuento: porcentaje de descuento sobre la tarifa (0 a 0.5)
+    - trm: COP por USD
 
-    valor_sv_neto_usd = tarifa_sv_usd * (1 - descuento)
+    valor_sv_neto_usd = TARIFA_SV_USD * (1 - descuento)
     valor_sv_neto_cop = valor_sv_neto_usd * trm
     comision_sv_total_cop = num_sv * valor_sv_neto_cop * pct
     """
     pct = get_pct_sv(num_sv)
-    valor_sv_neto_usd = tarifa_sv_usd * (1.0 - descuento)
+    valor_sv_neto_usd = TARIFA_SV_USD * (1.0 - descuento)
     valor_sv_neto_cop = valor_sv_neto_usd * trm
     comision_total = num_sv * valor_sv_neto_cop * pct
     return comision_total, pct, valor_sv_neto_cop
@@ -233,12 +243,14 @@ def build_simulador():
 
     st.markdown(
         """
-        Este simulador permite estimar el **ingreso mensual** de un Especialista de Crédito,
+        Este simulador estima el **ingreso mensual** de un Especialista de Crédito,
         combinando:
 
         - Comisiones por **Servicio Viventa (SV)** según tramos.
         - Comisiones por **Vivecasas** con dos tipos de esquema.
-        - Un **fijo mensual** y un **bono mensual** (por ejemplo, prorrateo de un bono trimestral).
+        - Un **fijo mensual** y un **bono mensual** (prorrateo de bono trimestral, por ejemplo).
+
+        Para SV se asume una **tarifa estándar de 400 USD** y una **TRM fija de 3.800 COP/USD**.
         """
     )
 
@@ -250,39 +262,28 @@ def build_simulador():
     num_sv = st.sidebar.number_input(
         "SV facturados en el mes",
         min_value=0,
-        max_value=100,
+        max_value=200,
         value=10,
         step=1,
         key="sim_num_sv",
     )
-    tarifa_sv_usd = st.sidebar.number_input(
-        "Tarifa SV (USD)",
-        min_value=0.0,
-        value=1500.0,
-        step=50.0,
-        key="sim_tarifa_sv_usd",
-    )
+
     descuento = st.sidebar.slider(
-        "% de descuento sobre tarifa SV",
+        "Descuento promedio SV (%)",
         min_value=0.0,
-        max_value=0.30,
+        max_value=0.5,   # 0% a 50%
         value=0.0,
         step=0.01,
         key="sim_descuento",
     )
-    trm = st.sidebar.number_input(
-        "TRM (COP por USD)",
-        min_value=1000.0,
-        value=TASA_USD,
-        step=100.0,
-        key="sim_trm",
-    )
+
+    trm_sim = TASA_USD  # TRM asumida para el simulador (3.800 COP)
 
     # Vivecasas
     num_vivecasas = st.sidebar.number_input(
         "Vivecasas cerradas en el mes",
         min_value=0,
-        max_value=100,
+        max_value=200,
         value=5,
         step=1,
         key="sim_num_vc",
@@ -302,16 +303,16 @@ def build_simulador():
         comision_fija_cop = st.sidebar.number_input(
             "Comisión fija por Vivecasa (COP)",
             min_value=0.0,
-            value=2000000.0,
-            step=100000.0,
+            value=2_000_000.0,
+            step=100_000.0,
             key="sim_vc_fija",
         )
     else:
         tarifa_vivecasa_cop = st.sidebar.number_input(
             "Tarifa promedio Vivecasa (COP)",
             min_value=0.0,
-            value=15000000.0,
-            step=500000.0,
+            value=15_000_000.0,
+            step=500_000.0,
             key="sim_vc_tarifa",
         )
         pct_vivecasa = st.sidebar.slider(
@@ -327,24 +328,23 @@ def build_simulador():
     fijo_mensual = st.sidebar.number_input(
         "Fijo mensual (COP)",
         min_value=0.0,
-        value=4000000.0,
-        step=100000.0,
+        value=4_000_000.0,
+        step=100_000.0,
         key="sim_fijo",
     )
     bono_mensual = st.sidebar.number_input(
         "Bono mensual (COP)",
         min_value=0.0,
-        value=500000.0,
-        step=50000.0,
+        value=500_000.0,
+        step=50_000.0,
         key="sim_bono",
     )
 
     # -------- CÁLCULOS --------
     comision_sv_total_cop, pct_sv, valor_sv_neto_cop = calcular_comision_sv(
         num_sv=num_sv,
-        tarifa_sv_usd=tarifa_sv_usd,
         descuento=descuento,
-        trm=trm,
+        trm=trm_sim,
     )
 
     comision_vc_total_cop = calcular_comision_vivecasa(
@@ -374,9 +374,9 @@ def build_simulador():
     data_detalle = {
         "Concepto": [
             "SV facturados",
-            "Tarifa SV (USD)",
-            "% descuento",
-            "TRM usada",
+            "Tarifa estándar SV (USD)",
+            "Descuento promedio SV",
+            "TRM usada (COP/USD)",
             "% comisión SV aplicado",
             "Valor SV neto por unidad (COP)",
             "Comisión SV total (COP)",
@@ -390,9 +390,9 @@ def build_simulador():
         ],
         "Valor": [
             num_sv,
-            f"{tarifa_sv_usd:,.2f} USD",
+            f"{TARIFA_SV_USD:,.2f} USD",
             f"{descuento*100:.1f} %",
-            f"{trm:,.0f} COP/USD",
+            f"{trm_sim:,.0f} COP/USD",
             f"{pct_sv*100:.1f} %",
             f"{valor_sv_neto_cop:,.0f} COP",
             f"{comision_sv_total_cop:,.0f} COP",
