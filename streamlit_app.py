@@ -30,35 +30,25 @@ df = load_data()
 # ----------------------------------
 st.sidebar.header("Filtros")
 
-# 🔹 Filtro de moneda
-moneda = st.sidebar.selectbox(
+# 🔹 Moneda de visualización (botones)
+moneda = st.sidebar.radio(
     "Moneda de visualización",
-    ["COP", "USD", "EUR"]
+    ["COP", "USD", "EUR"],
+    index=0  # empieza en COP
 )
 
-# Tasas de cambio (COP por 1 USD / COP por 1 EUR)
-st.sidebar.markdown("### Tasas de cambio (COP por unidad)")
-tasa_usd = st.sidebar.number_input(
-    "1 USD = cuántos COP",
-    min_value=0.0001,
-    value=4000.0,
-    step=100.0
-)
-tasa_eur = st.sidebar.number_input(
-    "1 EUR = cuántos COP",
-    min_value=0.0001,
-    value=4300.0,
-    step=100.0
-)
+# Tasas fijas
+TASA_USD = 3800.0   # 1 USD = 3800 COP
+TASA_EUR = 4424.0   # 1 EUR = 4424 COP
 
 def convertir_desde_cop(valor_cop: float, moneda: str) -> float:
     """Convierte un valor en COP a la moneda seleccionada."""
     if moneda == "COP":
         return valor_cop
     elif moneda == "USD":
-        return valor_cop / tasa_usd
+        return valor_cop / TASA_USD
     elif moneda == "EUR":
-        return valor_cop / tasa_eur
+        return valor_cop / TASA_EUR
     return valor_cop
 
 def formato_moneda(valor: float, moneda: str) -> str:
@@ -85,7 +75,10 @@ df_filt = df[(df["Año"] == año_sel) & (df["Mes"].between(mes_ini, mes_fin))]
 # Título
 # ----------------------------------
 st.title("Dashboard Plan de Compensación – Especialista de Crédito")
-st.caption(f"Mostrando valores en **{moneda}** (tasas configurables en la barra lateral)")
+st.caption(
+    f"Datos originales en COP. Mostrando importes convertidos a **{moneda}** "
+    f"(USD=3.800 COP, EUR=4.424 COP)."
+)
 
 # ----------------------------------
 # KPIs (convertidos a la moneda seleccionada)
@@ -97,7 +90,7 @@ total_vc_com_cop = df_filt["VC_Comision"].sum()
 total_tri_cop = df_filt["Trimestral"].sum()
 total_var_cop = total_sv_com_cop + total_vc_com_cop + total_tri_cop
 
-# Conversión a la moneda elegida
+# Conversión
 total_sv_com = convertir_desde_cop(total_sv_com_cop, moneda)
 total_vc_com = convertir_desde_cop(total_vc_com_cop, moneda)
 total_tri = convertir_desde_cop(total_tri_cop, moneda)
@@ -116,10 +109,12 @@ st.markdown("---")
 # Preparar dataframe convertido para gráficos
 # ----------------------------------
 df_plot = df_filt.copy()
-for col in ["SV_Comision", "VC_Comision"]:
-    df_plot[col + "_conv"] = df_plot[col].apply(
-        lambda v: convertir_desde_cop(v, moneda)
-    )
+df_plot["SV_Comision_conv"] = df_plot["SV_Comision"].apply(
+    lambda v: convertir_desde_cop(v, moneda)
+)
+df_plot["VC_Comision_conv"] = df_plot["VC_Comision"].apply(
+    lambda v: convertir_desde_cop(v, moneda)
+)
 
 # ----------------------------------
 # Gráficos
@@ -128,8 +123,13 @@ colA, colB = st.columns(2)
 
 with colA:
     st.subheader("Servicio Viventa – Unidades por mes")
-    fig1 = px.bar(df_plot, x="NombreMes", y="SV_Unidades", text="SV_Unidades",
-                  labels={"NombreMes": "Mes", "SV_Unidades": "Unidades"})
+    fig1 = px.bar(
+        df_plot,
+        x="NombreMes",
+        y="SV_Unidades",
+        text="SV_Unidades",
+        labels={"NombreMes": "Mes", "SV_Unidades": "Unidades"},
+    )
     st.plotly_chart(fig1, use_container_width=True)
 
     st.subheader(f"Servicio Viventa – Comisión por mes ({moneda})")
@@ -138,14 +138,19 @@ with colA:
         x="NombreMes",
         y="SV_Comision_conv",
         markers=True,
-        labels={"NombreMes": "Mes", "SV_Comision_conv": f"Comisión ({moneda})"}
+        labels={"NombreMes": "Mes", "SV_Comision_conv": f"Comisión ({moneda})"},
     )
     st.plotly_chart(fig2, use_container_width=True)
 
 with colB:
     st.subheader("Vivecasa – Unidades por mes")
-    fig3 = px.bar(df_plot, x="NombreMes", y="VC_Unidades", text="VC_Unidades",
-                  labels={"NombreMes": "Mes", "VC_Unidades": "Unidades"})
+    fig3 = px.bar(
+        df_plot,
+        x="NombreMes",
+        y="VC_Unidades",
+        text="VC_Unidades",
+        labels={"NombreMes": "Mes", "VC_Unidades": "Unidades"},
+    )
     st.plotly_chart(fig3, use_container_width=True)
 
     st.subheader(f"Vivecasa – Comisión por mes ({moneda})")
@@ -154,9 +159,9 @@ with colB:
         x="NombreMes",
         y="VC_Comision_conv",
         markers=True,
-        labels={"NombreMes": "Mes", "VC_Comision_conv": f"Comisión ({moneda})"}
+        labels={"NombreMes": "Mes", "VC_Comision_conv": f"Comisión ({moneda})"},
     )
     st.plotly_chart(fig4, use_container_width=True)
 
-st.markdown("### Detalle filtrado (valores monetarios en COP originales)")
+st.markdown("### Detalle filtrado (valores originales en COP)")
 st.dataframe(df_filt)
