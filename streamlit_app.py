@@ -10,7 +10,7 @@ st.set_page_config(page_title="Dashboard & Simulador Viventa", layout="wide")
 # Constantes generales
 TASA_USD = 3800.0   # TRM usada para histórico y simulador
 TASA_EUR = 4424.0
-TARIFA_SV_USD = 400.0  # valor estándar de una SV en el simulador
+TARIFA_SV_USD = 500.0  # valor estándar de una SV en el simulador
 
 
 # ---------------------------------------------------
@@ -201,9 +201,9 @@ def calcular_comision_sv(num_sv: int, descuento: float, trm: float):
     Comisión SV en el simulador:
 
     - La cantidad de SV **solo** define el % de comisión (tramo).
-    - La base es: 400 USD - descuento.
+    - La base es: 500 USD - descuento.
     - Fórmula en COP:
-        valor_sv_neto_usd = 400 * (1 - descuento)
+        valor_sv_neto_usd = 500 * (1 - descuento)
         valor_sv_neto_cop = valor_sv_neto_usd * trm
         comisión_SV = valor_sv_neto_cop * %comisión
 
@@ -243,14 +243,14 @@ def build_simulador():
         """
         ### Reglas del simulador – Servicio Viventa (SV)
 
-        - Tarifa estándar SV: **400 USD**  
+        - Tarifa estándar SV: **500 USD**  
         - TRM usada: **3.800 COP/USD**  
-        - El **descuento** se aplica al precio de 400 USD.  
+        - El **descuento** se aplica al precio de 500 USD.  
         - La **cantidad de SV solo determina el tramo de comisión (%), NO multiplica la fórmula.**
 
         Fórmula de la comisión SV:
 
-        > Comisión SV mensual = 400 × (1 − descuento) × %comisión × TRM
+        > Comisión SV mensual = 500 × (1 − descuento) × %comisión × TRM
         """
     )
 
