@@ -1,151 +1,144 @@
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
+import plotly.express as px
 
-# Set the title and favicon that appear in the Browser's tab bar.
+# ----------------------------------
+# Configuración básica de la página
+# ----------------------------------
 st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
+    page_title="Dashboard Plan de Compensación",
+    layout="wide"
 )
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
-
+# ----------------------------------
+# Función para cargar y limpiar datos
+# ----------------------------------
 @st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+def load_data():
+    # Leemos el CSV dentro de la carpeta data
+    df = pd.read_csv("data/datos.csv")
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+    # Normalizar nombres de meses a minúscula y crear número de mes
+    mes_map = {
+        "enero": 1, "febrero": 2, "marzo": 3, "abril": 4,
+        "mayo": 5, "junio": 6, "julio": 7, "agosto": 8,
+        "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12,
+    }
+    df["Mes_clean"] = df["Mes"].astype(str).str.strip().str.lower()
+    df["Mes_num"] = df["Mes_clean"].map(mes_map)
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+    # Orden correcto para mostrar en gráficos
+    orden_meses = list(mes_map.keys())
+    df["Mes_clean"] = pd.Categorical(df["Mes_clean"], categories=orden_meses, ordered=True)
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+    # Función para convertir texto tipo "1.094.400" -> 1094400
+    def to_number(col):
+        return (
+            pd.to_numeric(
+                df[col]
+                .astype(str)
+                .str.replace(".", "", regex=False)
+                .str.replace(",", "", regex=False),
+                errors="coerce"
+            )
+            .fillna(0)
+        )
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
+    # Convertir columnas de dinero a número
+    df["Comision SV"] = to_number("Comision SV")
+    df["Vivecasas"] = to_number("Vivecasas")
+    df["Salario"] = to_number("Salario")
+    df["Trimestral"] = to_number("Trimestral")   # bono trimestral
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+    return df
 
-    return gdp_df
+df = load_data()
 
-gdp_df = get_gdp_data()
+# ----------------------------------
+# Título
+# ----------------------------------
+st.title("Dashboard Plan de Compensación – Especialista de Crédito")
 
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
-
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
+st.markdown(
+    "Dashboard de **unidades y compensación variable** por Servicio Viventa y Vivecasa, "
+    "incluyendo el **bono trimestral**, filtrado por año, rango de meses y comercial."
 )
 
-''
-''
+# ----------------------------------
+# SIDEBAR: filtros
+# ----------------------------------
+st.sidebar.header("Filtros")
 
+comerciales = ["Todos"] + sorted(df["Comercial"].unique().tolist())
+com_sel = st.sidebar.selectbox("Comercial", comerciales)
 
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
+años = sorted(df["Año"].unique())
+año_sel = st.sidebar.selectbox("Año", años)
 
-st.header(f'GDP in {to_year}', divider='gray')
+df_filt = df[df["Año"] == año_sel].copy()
+if com_sel != "Todos":
+    df_filt = df_filt[df_filt["Comercial"] == com_sel]
 
-''
+mes_min = int(df_filt["Mes_num"].min())
+mes_max = int(df_filt["Mes_num"].max())
 
-cols = st.columns(4)
+rango_meses = st.sidebar.slider(
+    "Rango de meses",
+    mes_min,
+    mes_max,
+    (mes_min, mes_max)
+)
 
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
+mes_ini, mes_fin = rango_meses
+df_filt = df_filt[(df_filt["Mes_num"] >= mes_ini) & (df_filt["Mes_num"] <= mes_fin)]
+df_filt = df_filt.sort_values("Mes_num")
 
-    with col:
-        first_gdp = first_year[gdp_df['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[gdp_df['Country Code'] == country]['GDP'].iat[0] / 1000000000
+# ----------------------------------
+# KPIs
+# ----------------------------------
+total_sv_unid = df_filt["SV facturado"].sum()
+total_sv_com = df_filt["Comision SV"].sum()
+total_vc_com = df_filt["Vivecasas"].sum()
+total_tri = df_filt["Trimestral"].sum()
+total_var = total_sv_com + total_vc_com + total_tri
+salario_prom = df_filt["Salario"].mean()
 
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
+col1, col2, col3, col4, col5 = st.columns(5)
+col1.metric("Unidades Viventa", total_sv_unid)
+col2.metric("Comisión SV", f"${total_sv_com:,.0f}")
+col3.metric("Comisión Vivecasa", f"${total_vc_com:,.0f}")
+col4.metric("Bono Trimestral", f"${total_tri:,.0f}")
+col5.metric("Total Variable", f"${total_var:,.0f}")
 
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+st.markdown("---")
+
+# ----------------------------------
+# GRÁFICOS
+# ----------------------------------
+if df_filt.empty:
+    st.warning("No hay datos para los filtros seleccionados.")
+else:
+    colA, colB = st.columns(2)
+
+    with colA:
+        st.subheader("Servicio Viventa – Unidades por mes")
+        fig1 = px.bar(df_filt, x="Mes_clean", y="SV facturado", text="SV facturado")
+        st.plotly_chart(fig1, use_container_width=True)
+
+    with colA:
+        st.subheader("Servicio Viventa – Comisión")
+        fig2 = px.line(df_filt, x="Mes_clean", y="Comision SV", markers=True)
+        st.plotly_chart(fig2, use_container_width=True)
+
+    with colB:
+        st.subheader("Vivecasa – Comisión")
+        fig3 = px.bar(df_filt, x="Mes_clean", y="Vivecasas", text="Vivecasas")
+        st.plotly_chart(fig3, use_container_width=True)
+
+    with colB:
+        st.subheader("Bono Trimestral por Mes")
+        fig4 = px.bar(df_filt, x="Mes_clean", y="Trimestral", text="Trimestral")
+        st.plotly_chart(fig4, use_container_width=True)
+
+    st.markdown("### Detalle de los datos filtrados")
+    st.dataframe(df_filt)
