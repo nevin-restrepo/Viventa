@@ -178,15 +178,14 @@ def build_dashboard():
 # ---------------------------------------------------
 # MÓDULO 2: SIMULADOR VIVENTA 2025
 # ---------------------------------------------------
-# --- Reglas de SV ---
+
+# Tramos SV:
+# 0–8 SV   -> 0%
+# 9–11 SV  -> 8%
+# 12–16 SV -> 18%
+# 17+ SV   -> 25%
+
 def get_pct_sv(num_sv: int) -> float:
-    """
-    Devuelve el % de comisión SV según el número de SV:
-    0 a 8   -> 0%
-    9 a 11  -> 8%
-    12 a 16 -> 18%
-    17 o más -> 25%
-    """
     if num_sv <= 8:
         return 0.0
     elif num_sv <= 11:
@@ -200,19 +199,22 @@ def get_pct_sv(num_sv: int) -> float:
 def calcular_comision_sv(num_sv: int, descuento: float, trm: float):
     """
     Calcula la comisión total de SV en COP con:
-    - Tarifa estándar SV: 400 USD
-    - descuento: porcentaje de descuento sobre la tarifa (0 a 0.5)
+    - Tarifa estándar SV: 400 USD (TARIFA_SV_USD)
+    - descuento: 0.0 a 0.5
     - trm: COP por USD
 
-    valor_sv_neto_usd = TARIFA_SV_USD * (1 - descuento)
-    valor_sv_neto_cop = valor_sv_neto_usd * trm
-    comision_sv_total_cop = num_sv * valor_sv_neto_cop * pct
+    Fórmula:
+    comision_por_sv = (tarifa_neta_usd * trm) * pct_según_tramo
+    comision_total = comision_por_sv * num_sv
     """
     pct = get_pct_sv(num_sv)
     valor_sv_neto_usd = TARIFA_SV_USD * (1.0 - descuento)
     valor_sv_neto_cop = valor_sv_neto_usd * trm
-    comision_total = num_sv * valor_sv_neto_cop * pct
-    return comision_total, pct, valor_sv_neto_cop
+
+    comision_por_sv_cop = valor_sv_neto_cop * pct
+    comision_total = comision_por_sv_cop * num_sv
+
+    return comision_total, pct, valor_sv_neto_cop, comision_por_sv_cop
 
 
 def calcular_comision_vivecasa(
@@ -222,17 +224,12 @@ def calcular_comision_vivecasa(
     tarifa_vivecasa_cop: float | None = None,
     pct_vivecasa: float | None = None,
 ):
-    """
-    Calcula la comisión total de Vivecasa en COP según el esquema elegido.
-    """
     if num_vivecasas <= 0:
         return 0.0
 
     if tipo_esquema == "Fija por unidad (COP)":
-        comision_fija_cop = comision_fija_cop or 0.0
-        return num_vivecasas * comision_fija_cop
+        return num_vivecasas * (comision_fija_cop or 0.0)
 
-    # Esquema % sobre tarifa
     tarifa_vivecasa_cop = tarifa_vivecasa_cop or 0.0
     pct_vivecasa = pct_vivecasa or 0.0
     return num_vivecasas * tarifa_vivecasa_cop * pct_vivecasa
@@ -241,58 +238,49 @@ def calcular_comision_vivecasa(
 def build_simulador():
     st.subheader("Simulador de compensación comercial Viventa 2025")
 
-    st.markdown(
+    st.write(
         """
-        Este simulador estima el **ingreso mensual** de un Especialista de Crédito,
-        combinando:
-
-        - Comisiones por **Servicio Viventa (SV)** según tramos.
-        - Comisiones por **Vivecasas** con dos tipos de esquema.
-        - Un **fijo mensual** y un **bono mensual** (prorrateo de bono trimestral, por ejemplo).
-
-        Para SV se asume una **tarifa estándar de 400 USD** y una **TRM fija de 3.800 COP/USD**.
+        Tarifa estándar SV: **400 USD**  
+        TRM usada en la simulación: **3.800 COP/USD**  
+        La comisión SV depende del número total de SV facturados.
         """
     )
 
-    # -------- ENTRADAS EN SIDEBAR --------
+    # -------- ENTRADAS ----------
     st.sidebar.markdown("---")
-    st.sidebar.subheader("Parámetros del simulador (2025)")
+    st.sidebar.subheader("Parámetros del simulador")
 
-    # SV
     num_sv = st.sidebar.number_input(
-        "SV facturados en el mes",
+        "SV facturados",
         min_value=0,
         max_value=200,
         value=10,
         step=1,
-        key="sim_num_sv",
+        key="num_sv",
     )
 
     descuento = st.sidebar.slider(
         "Descuento promedio SV (%)",
         min_value=0.0,
-        max_value=0.5,   # 0% a 50%
+        max_value=0.50,
         value=0.0,
         step=0.01,
-        key="sim_descuento",
+        key="desc_sv",
     )
 
-    trm_sim = TASA_USD  # TRM asumida para el simulador (3.800 COP)
-
-    # Vivecasas
     num_vivecasas = st.sidebar.number_input(
-        "Vivecasas cerradas en el mes",
+        "Vivecasas cerradas",
         min_value=0,
         max_value=200,
         value=5,
         step=1,
-        key="sim_num_vc",
+        key="num_vc",
     )
 
     tipo_esquema_vc = st.sidebar.selectbox(
-        "Esquema de comisión Vivecasa",
+        "Esquema Vivecasa",
         ["Fija por unidad (COP)", "% sobre tarifa (COP)"],
-        key="sim_tipo_vc",
+        key="tipo_vc",
     )
 
     comision_fija_cop = None
@@ -305,49 +293,48 @@ def build_simulador():
             min_value=0.0,
             value=2_000_000.0,
             step=100_000.0,
-            key="sim_vc_fija",
+            key="vc_fija",
         )
     else:
         tarifa_vivecasa_cop = st.sidebar.number_input(
             "Tarifa promedio Vivecasa (COP)",
-            min_value=0.0,
+            min_value=5_000_000.0,
             value=15_000_000.0,
             step=500_000.0,
-            key="sim_vc_tarifa",
+            key="vc_tarifa",
         )
         pct_vivecasa = st.sidebar.slider(
-            "% comisión Vivecasa sobre tarifa",
+            "% comisión Vivecasa",
             min_value=0.0,
             max_value=0.20,
             value=0.05,
             step=0.01,
-            key="sim_vc_pct",
+            key="vc_pct",
         )
 
-    # Fijo y bono
     fijo_mensual = st.sidebar.number_input(
         "Fijo mensual (COP)",
         min_value=0.0,
         value=4_000_000.0,
         step=100_000.0,
-        key="sim_fijo",
+        key="fijo",
     )
     bono_mensual = st.sidebar.number_input(
         "Bono mensual (COP)",
         min_value=0.0,
         value=500_000.0,
         step=50_000.0,
-        key="sim_bono",
+        key="bono",
     )
 
-    # -------- CÁLCULOS --------
-    comision_sv_total_cop, pct_sv, valor_sv_neto_cop = calcular_comision_sv(
+    # -------- CÁLCULOS ----------
+    com_sv_total, pct_sv, valor_sv_neto_cop, comision_por_sv = calcular_comision_sv(
         num_sv=num_sv,
         descuento=descuento,
-        trm=trm_sim,
+        trm=3800,
     )
 
-    comision_vc_total_cop = calcular_comision_vivecasa(
+    com_vc_total = calcular_comision_vivecasa(
         num_vivecasas=num_vivecasas,
         tipo_esquema=tipo_esquema_vc,
         comision_fija_cop=comision_fija_cop,
@@ -355,101 +342,66 @@ def build_simulador():
         pct_vivecasa=pct_vivecasa,
     )
 
-    total_variable = comision_sv_total_cop + comision_vc_total_cop
+    total_variable = com_sv_total + com_vc_total
     total_mensual = fijo_mensual + bono_mensual + total_variable
 
-    # -------- RESUMEN EN MÉTRICAS --------
-    st.markdown("### Resumen mensual simulado (COP)")
+    # -------- MÉTRICAS ----------
+    st.markdown("### Resultado mensual simulado")
 
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Fijo", f"${fijo_mensual:,.0f}")
-    col2.metric("Bono", f"${bono_mensual:,.0f}")
-    col3.metric("Variable SV", f"${comision_sv_total_cop:,.0f}")
-    col4.metric("Variable Vivecasas", f"${comision_vc_total_cop:,.0f}")
-    col5.metric("Total mensual", f"${total_mensual:,.0f}")
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Fijo", f"${fijo_mensual:,.0f}")
+    m2.metric("Bono", f"${bono_mensual:,.0f}")
+    m3.metric("Var. SV", f"${com_sv_total:,.0f}")
+    m4.metric("Var. Vivecasas", f"${com_vc_total:,.0f}")
+    m5.metric("Total mensual", f"${total_mensual:,.0f}")
 
-    # -------- DETALLE EN TABLA --------
-    st.markdown("### Detalle de la simulación")
+    # -------- TABLA DETALLE ----------
+    st.markdown("### Detalle de cálculo")
 
-    data_detalle = {
+    detalle = pd.DataFrame({
         "Concepto": [
             "SV facturados",
-            "Tarifa estándar SV (USD)",
-            "Descuento promedio SV",
-            "TRM usada (COP/USD)",
-            "% comisión SV aplicado",
-            "Valor SV neto por unidad (COP)",
-            "Comisión SV total (COP)",
+            "% comisión SV según tramo",
+            "Tarifa neta por SV (COP)",
+            "Comisión por SV (COP)",
+            "Comisión total SV (COP)",
             "Vivecasas cerradas",
-            "Esquema Vivecasa",
-            "Comisión Vivecasa total (COP)",
-            "Fijo mensual (COP)",
-            "Bono mensual (COP)",
-            "Total variable (COP)",
-            "Total mensual (COP)",
+            "Comisión total Vivecasa (COP)",
+            "Fijo (COP)",
+            "Bono (COP)",
+            "Total Variable (COP)",
+            "Total Mensual (COP)",
         ],
         "Valor": [
             num_sv,
-            f"{TARIFA_SV_USD:,.2f} USD",
-            f"{descuento*100:.1f} %",
-            f"{trm_sim:,.0f} COP/USD",
-            f"{pct_sv*100:.1f} %",
-            f"{valor_sv_neto_cop:,.0f} COP",
-            f"{comision_sv_total_cop:,.0f} COP",
+            f"{pct_sv * 100:.1f} %",
+            f"{valor_sv_neto_cop:,.0f}",
+            f"{comision_por_sv:,.0f}",
+            f"{com_sv_total:,.0f}",
             num_vivecasas,
-            tipo_esquema_vc,
-            f"{comision_vc_total_cop:,.0f} COP",
-            f"{fijo_mensual:,.0f} COP",
-            f"{bono_mensual:,.0f} COP",
-            f"{total_variable:,.0f} COP",
-            f"{total_mensual:,.0f} COP",
+            f"{com_vc_total:,.0f}",
+            f"{fijo_mensual:,.0f}",
+            f"{bono_mensual:,.0f}",
+            f"{total_variable:,.0f}",
+            f"{total_mensual:,.0f}",
         ],
-    }
+    })
+    st.table(detalle)
 
-    df_detalle = pd.DataFrame(data_detalle)
-    st.table(df_detalle)
+    # -------- GRÁFICO ----------
+    st.markdown("### Fijo vs Variable")
 
-    # -------- GRÁFICO DE BARRAS --------
-    st.markdown("### Distribución fijo vs variable")
+    barras = pd.DataFrame({
+        "Componente": ["Fijo", "Variable SV", "Variable VC"],
+        "Valor": [fijo_mensual, com_sv_total, com_vc_total],
+    })
 
-    df_barras = pd.DataFrame(
-        {
-            "Componente": ["Fijo", "Variable SV", "Variable Vivecasas"],
-            "Valor_COP": [fijo_mensual, comision_sv_total_cop, comision_vc_total_cop],
-        }
-    )
-
-    fig_bar = px.bar(
-        df_barras,
+    fig = px.bar(
+        barras,
         x="Componente",
-        y="Valor_COP",
-        text="Valor_COP",
-        labels={"Valor_COP": "Valor (COP)"},
+        y="Valor",
+        text="Valor",
+        labels={"Valor": "Valor (COP)"},
     )
-    fig_bar.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
-    fig_bar.update_layout(yaxis_tickformat=",")
-    st.plotly_chart(fig_bar, use_container_width=True, key="sim_bar")
-
-
-# ---------------------------------------------------
-# MAIN
-# ---------------------------------------------------
-def main():
-    st.title("Viventa – Dashboard & Simulador de Compensación 2025")
-
-    # Modo de la app
-    modo = st.sidebar.radio(
-        "¿Qué quieres usar?",
-        ["Dashboard histórico", "Simulador 2025"],
-        index=0,
-        key="modo_app",
-    )
-
-    if modo == "Dashboard histórico":
-        build_dashboard()
-    else:
-        build_simulador()
-
-
-if __name__ == "__main__":
-    main()
+    fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
+    st.plotly_chart(fig, use_container_width=True)
