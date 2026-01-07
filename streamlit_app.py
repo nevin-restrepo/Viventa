@@ -2,8 +2,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-st.set_page_config(page_title="Hoja1", layout="wide")
-
+# -------------------------
+# CONFIG
+# -------------------------
+st.set_page_config(page_title="Viventa - Histórico & Simulador", layout="wide")
 FILE_PATH = "data/HdePagos.xlsx"
 
 MONEY_COLS = [
@@ -15,12 +17,8 @@ MONEY_COLS = [
     "Total Bonos y Premios USD",
     "Total Total Nomina USD",
 ]
-
 DIM_COLS = ["Periodo", "Empleador", "Nick Name", "Cargo", "Total Activos"]
 
-# -------------------------
-# PARSEO PERIODO (January 2024 -> fecha)
-# -------------------------
 MONTH_MAP_EN = {
     "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
     "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12
@@ -31,67 +29,52 @@ MONTH_MAP_ES = {
 }
 
 def parse_periodo_to_date(s: str):
-    """
-    Convierte 'January 2024' / 'Enero 2024' a Timestamp del 1er día del mes.
-    Si ya es fecha (2024-01-01 o similar), también lo parsea.
-    """
     if s is None or (isinstance(s, float) and np.isnan(s)):
         return pd.NaT
     txt = str(s).strip()
 
-    # 1) Intento directo (por si viene como fecha o '2024-01')
     dt = pd.to_datetime(txt, errors="coerce")
     if not pd.isna(dt):
         return pd.Timestamp(dt.year, dt.month, 1)
 
-    # 2) Formato "Mes Año"
     parts = txt.replace("-", " ").replace("/", " ").split()
     if len(parts) >= 2:
         mes = parts[0].lower()
-        anio = parts[1]
         try:
-            y = int(anio)
+            y = int(parts[1])
         except Exception:
             return pd.NaT
-
         m = MONTH_MAP_EN.get(mes) or MONTH_MAP_ES.get(mes)
         if m:
             return pd.Timestamp(y, m, 1)
-
     return pd.NaT
 
-
-def fmt_usd(x: float) -> str:
-    return f"${x:,.2f} USD"
-
+def fmt_money(x: float, currency: str = "COP") -> str:
+    if currency == "USD":
+        return f"${x:,.2f} USD"
+    if currency == "EUR":
+        return f"€{x:,.2f}"
+    return f"${x:,.0f} COP"
 
 # -------------------------
-# CARGA + LIMPIEZA
+# HISTÓRICO: CARGA + LIMPIEZA
 # -------------------------
 @st.cache_data
 def load_nomina():
-    df = pd.read_excel(FILE_PATH)  # requiere openpyxl instalado
-
+    df = pd.read_excel(FILE_PATH)  # requiere openpyxl en requirements.txt
     df.columns = [c.strip() for c in df.columns]
     df = df.replace(r"^\s*$", np.nan, regex=True)
 
-    # Limpia dimensiones
     for c in ["Periodo", "Empleador", "Nick Name", "Cargo"]:
         if c in df.columns:
             df[c] = df[c].astype(str).str.strip()
 
-    # Parse Periodo a fecha para ordenar y filtrar por rango
-    if "Periodo" in df.columns:
-        df["Periodo_dt"] = df["Periodo"].apply(parse_periodo_to_date)
-    else:
-        df["Periodo_dt"] = pd.NaT
+    df["Periodo_dt"] = df["Periodo"].apply(parse_periodo_to_date) if "Periodo" in df.columns else pd.NaT
 
-    # Convierte numéricos
     for c in MONEY_COLS + ["Total Activos"]:
         if c in df.columns:
             df[c] = (
-                df[c]
-                .astype(str)
+                df[c].astype(str)
                 .str.replace(",", "", regex=False)
                 .str.replace("$", "", regex=False)
                 .replace("nan", np.nan)
@@ -100,123 +83,66 @@ def load_nomina():
 
     return df
 
-
-# -------------------------
-# APP
-# -------------------------
-def build_historico_nomina():
+def build_historico():
     df = load_nomina()
 
-    required = {"Periodo", "Empleador", "Nick Name", "Cargo", "Total Total Nomina USD"}
+    required = {"Periodo", "Empleador", "Nick Name", "Cargo"}
     missing = required - set(df.columns)
     if missing:
         st.error(f"Faltan columnas requeridas: {missing}")
         return
 
-    st.title("Histórico de pagos (USD)")
-    st.subheader("Consulta por Cargo → Persona")
+    st.subheader("Histórico de pagos (USD)")
 
-    # ---- Filtros ----
-    st.sidebar.subheader("Filtros")
-
+    st.sidebar.subheader("Filtros (Histórico)")
     cargos = sorted(df["Cargo"].dropna().unique())
-    cargo_sel = st.sidebar.selectbox("Cargo", cargos, key="cargo_sel")
+    cargo_sel = st.sidebar.selectbox("Cargo", cargos, key="hist_cargo")
 
     df_c = df[df["Cargo"] == cargo_sel].copy()
-
     personas = sorted(df_c["Nick Name"].dropna().unique())
-    persona_sel = st.sidebar.selectbox("Nick Name", personas, key="persona_sel")
+    persona_sel = st.sidebar.selectbox("Nick Name", personas, key="hist_persona")
 
     df_p = df_c[df_c["Nick Name"] == persona_sel].copy()
 
-    # (Opcional) empleador
-    empleadores = sorted(df_p["Empleador"].dropna().unique())
-    if len(empleadores) > 1:
-        emp_sel = st.sidebar.multiselect(
-            "Empleador", empleadores, default=empleadores, key="emp_sel"
-        )
-        df_p = df_p[df_p["Empleador"].isin(emp_sel)].copy()
-
-    # ---- Filtro por rango de periodos (ordenado por Periodo_dt) ----
+    # Rango de periodos
     st.sidebar.markdown("---")
     st.sidebar.subheader("Rango de periodos")
-
     periodos = (
-        df_p[["Periodo", "Periodo_dt"]]
-        .drop_duplicates()
+        df_p[["Periodo", "Periodo_dt"]].drop_duplicates()
         .sort_values(["Periodo_dt", "Periodo"], na_position="last")
         .reset_index(drop=True)
     )
-
-    if periodos.empty:
-        st.warning("No hay periodos para los filtros seleccionados.")
-        return
-
-    has_dt = periodos["Periodo_dt"].notna().any()
-
-    if has_dt:
-        labels = periodos["Periodo"].tolist()
+    labels = periodos["Periodo"].tolist()
+    if labels:
         start_label, end_label = st.sidebar.select_slider(
-            "Desde / Hasta",
-            options=labels,
-            value=(labels[0], labels[-1]),
-            key="periodo_rango",
+            "Desde / Hasta", options=labels, value=(labels[0], labels[-1]), key="hist_rango"
         )
-
         start_dt = periodos.loc[periodos["Periodo"] == start_label, "Periodo_dt"].iloc[0]
         end_dt = periodos.loc[periodos["Periodo"] == end_label, "Periodo_dt"].iloc[0]
-
-        if pd.isna(start_dt) or pd.isna(end_dt):
-            idx1 = labels.index(start_label)
-            idx2 = labels.index(end_label)
-            selected_labels = labels[min(idx1, idx2): max(idx1, idx2) + 1]
-            df_p = df_p[df_p["Periodo"].isin(selected_labels)].copy()
-        else:
+        if pd.notna(start_dt) and pd.notna(end_dt):
             df_p = df_p[(df_p["Periodo_dt"] >= start_dt) & (df_p["Periodo_dt"] <= end_dt)].copy()
-    else:
-        labels = periodos["Periodo"].tolist()
-        selected_labels = st.sidebar.multiselect(
-            "Selecciona periodos", labels, default=labels, key="periodo_multi"
-        )
-        df_p = df_p[df_p["Periodo"].isin(selected_labels)].copy()
 
-    if df_p.empty:
-        st.warning("No hay datos para el rango seleccionado.")
-        return
-
-    # ---- Orden cronológico real ----
     df_p = df_p.sort_values(["Periodo_dt", "Periodo"], na_position="last")
 
-    # ---- Totales base para KPIs ----
+    # KPIs simplificados
     total_basico = df_p["Total Salario Basico USD"].sum() if "Total Salario Basico USD" in df_p.columns else 0
+    prestaciones = df_p["Total Prestaciones Sociales USD"].sum() if "Total Prestaciones Sociales USD" in df_p.columns else 0
     total_vc = df_p["Total Comisiones Vivecasa USD"].sum() if "Total Comisiones Vivecasa USD" in df_p.columns else 0
     total_vp = df_p["Total Comisiones Viveprestamo USD"].sum() if "Total Comisiones Viveprestamo USD" in df_p.columns else 0
-    total_bonos = df_p["Total Bonos y Premios USD"].sum() if "Total Bonos y Premios USD" in df_p.columns else 0
+    bonos = df_p["Total Bonos y Premios USD"].sum() if "Total Bonos y Premios USD" in df_p.columns else 0
 
-    prestaciones_total = (
-        df_p["Total PPSS Salario Basico USD"].sum() if "Total PPSS Salario Basico USD" in df_p.columns else 0
-    ) + (
-        df_p["Total Prestaciones Sociales USD"].sum() if "Total Prestaciones Sociales USD" in df_p.columns else 0
-    )
-
-    # ---- KPIs (nombres simplificados) ----
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Salario Básico", fmt_usd(total_basico))
-    c2.metric("Prestaciones", fmt_usd(prestaciones_total))
-    c3.metric("Vivecasa", fmt_usd(total_vc))
-    c4.metric("Viveprestamo", fmt_usd(total_vp))
-    c5.metric("Bonos", fmt_usd(total_bonos))
+    c1.metric("Salario Básico", fmt_money(total_basico, "USD"))
+    c2.metric("Prestaciones", fmt_money(prestaciones, "USD"))
+    c3.metric("Vivecasa", fmt_money(total_vc, "USD"))
+    c4.metric("Viveprestamo", fmt_money(total_vp, "USD"))
+    c5.metric("Bonos", fmt_money(bonos, "USD"))
 
     st.caption(f"**Cargo:** {cargo_sel}  |  **Persona:** {persona_sel}")
+    st.divider()
 
-    st.markdown("---")
-
-    # ---- Resumen por periodo ----
     st.markdown("### Resumen por periodo")
-
-    # Para el resumen, dejamos las columnas originales + Total Nómina (si existe)
     sum_cols = [c for c in MONEY_COLS if c in df_p.columns]
-
     resumen = (
         df_p.groupby(["Periodo", "Periodo_dt"], as_index=False)[sum_cols]
         .sum(numeric_only=True)
@@ -225,18 +151,208 @@ def build_historico_nomina():
     )
     st.dataframe(resumen)
 
-    # ---- Detalle ----
     st.markdown("### Detalle")
     show_cols = [c for c in DIM_COLS if c in df_p.columns] + sum_cols
     st.dataframe(df_p[show_cols])
 
-    st.download_button(
-        "Descargar detalle filtrado (CSV)",
-        data=df_p.drop(columns=["Periodo_dt"], errors="ignore").to_csv(index=False).encode("utf-8"),
-        file_name=f"HdePagos_{persona_sel}.csv",
-        mime="text/csv",
-    )
 
+# -------------------------
+# SIMULADOR: ENGINE DINÁMICO
+# -------------------------
+def calc_excedente(aprob_mes: int, minimo: int, valor_unidad: int) -> int:
+    return max(aprob_mes - minimo, 0) * valor_unidad
+
+def calc_por_unidad(aprob_mes: int, valor_unidad: int) -> int:
+    return max(aprob_mes, 0) * valor_unidad
+
+def gate_all_ok(**gates) -> bool:
+    # gates: dict de {nombre: bool}
+    return all(bool(v) for v in gates.values())
+
+# Diccionario de cargos -> define inputs + cálculo
+SIM_ROLES = {
+    "Gestor de Crédito - UPF": {
+        "currency": "COP",
+        "inputs": [
+            ("aprob_mes", "Aprobaciones netas (mes)", "int", 0),
+            ("aprob_trim", "Aprobaciones netas (trimestre)", "int", 0),
+            ("garantia", "Cumple garantía de servicio", "bool", True),
+        ],
+        "calc": lambda x: {
+            "comision_mes": calc_excedente(x["aprob_mes"], minimo=4, valor_unidad=125000),
+            "bono_trim": 500000 if x["aprob_trim"] >= 25 else 0,
+            "total": 0  # lo seteo abajo con gate
+        },
+        "gate": lambda x: x["garantia"],
+    },
+    "Gestor de Crédito - Convenios/Vivecasas": {
+        "currency": "COP",
+        "inputs": [
+            ("aprob_mes", "Aprobaciones netas (mes)", "int", 0),
+            ("aprob_trim", "Aprobaciones netas (trimestre)", "int", 0),
+            ("garantia", "Cumple garantía de servicio", "bool", True),
+        ],
+        "calc": lambda x: {
+            "comision_mes": calc_excedente(x["aprob_mes"], minimo=10, valor_unidad=125000),
+            "bono_trim": 500000 if x["aprob_trim"] >= 50 else 0,
+            "total": 0
+        },
+        "gate": lambda x: x["garantia"],
+    },
+    "Gestor de Crédito - FNA": {
+        "currency": "COP",
+        "inputs": [
+            ("aprob_mes", "Aprobaciones netas (mes)", "int", 0),
+            ("aprob_trim", "Aprobaciones netas (trimestre)", "int", 0),
+            ("garantia", "Cumple garantía de servicio", "bool", True),
+        ],
+        "calc": lambda x: {
+            "comision_mes": calc_por_unidad(x["aprob_mes"], valor_unidad=125000),
+            "bono_trim": 500000 if x["aprob_trim"] >= 20 else 0,
+            "total": 0
+        },
+        "gate": lambda x: x["garantia"],
+    },
+    "Gestor de Crédito - Nueva/Usada": {
+        "currency": "COP",
+        "inputs": [
+            ("aprob_mes", "Aprobaciones netas (mes)", "int", 0),
+            ("aprob_trim", "Aprobaciones netas (trimestre)", "int", 0),
+            ("garantia", "Cumple garantía de servicio", "bool", True),
+        ],
+        "calc": lambda x: {
+            "comision_mes": calc_excedente(x["aprob_mes"], minimo=15, valor_unidad=125000),
+            "bono_trim": 500000 if x["aprob_trim"] >= 70 else 0,
+            "total": 0
+        },
+        "gate": lambda x: x["garantia"],
+    },
+
+    "Analista de Crédito II": {
+        "currency": "COP",
+        "inputs": [
+            ("aprob_mes", "Aprobaciones netas (mes)", "int", 0),
+            ("carpetas_3dias", "% carpetas ≤ 3 días (0-1)", "float", 0.90),
+            ("radicado_ok", "% radicado aprobado (0-1)", "float", 0.90),
+        ],
+        "calc": lambda x: {
+            "comision_mes": calc_excedente(x["aprob_mes"], minimo=40, valor_unidad=25000),
+            "total": 0
+        },
+        "gate": lambda x: gate_all_ok(
+            carpetas=x["carpetas_3dias"] >= 0.90,
+            radicado=x["radicado_ok"] >= 0.90
+        ),
+    },
+
+    "Analista de Crédito III": {
+        "currency": "COP",
+        "inputs": [
+            ("aprob_mes", "Aprobaciones netas (mes)", "int", 0),
+            ("carpetas_3dias", "% carpetas ≤ 3 días (0-1)", "float", 0.90),
+            ("radicado_ok", "% radicado aprobado (0-1)", "float", 0.90),
+        ],
+        "calc": lambda x: {
+            "comision_mes": calc_excedente(x["aprob_mes"], minimo=60, valor_unidad=25000),
+            "total": 0
+        },
+        "gate": lambda x: gate_all_ok(
+            carpetas=x["carpetas_3dias"] >= 0.90,
+            radicado=x["radicado_ok"] >= 0.90
+        ),
+    },
+
+    "Analista de Legalización": {
+        "currency": "COP",
+        "inputs": [
+            ("desem_mes", "Desembolsos (mes)", "int", 0),
+            ("monitoreo", "% monitoreo (0-1)", "float", 0.95),
+            ("ans", "% ANS (0-1)", "float", 0.90),
+            ("prod_notas", "% productividad notas (0-1)", "float", 0.90),
+            ("act_t1", "Actualizaciones tipo 1 (unid)", "int", 0),
+            ("act_t2", "Actualizaciones tipo 2 (unid)", "int", 0),
+        ],
+        "calc": lambda x: {
+            "comision_desem": calc_excedente(x["desem_mes"], minimo=20, valor_unidad=75000),
+            "actualizaciones": (x["act_t1"] * 30000) + (x["act_t2"] * 50000),
+            "total": 0
+        },
+        "gate": lambda x: gate_all_ok(
+            monitoreo=x["monitoreo"] >= 0.95,
+            ans=x["ans"] >= 0.90,
+            prod=x["prod_notas"] >= 0.90
+        ),
+        # Nota: aquí estoy aplicando gate SOLO a la comisión de desembolsos; actualizaciones se pagan por conteo.
+        "gate_scope": "desem_only"
+    },
+}
+
+def render_inputs(role_def: dict) -> dict:
+    values = {}
+    for key, label, typ, default in role_def["inputs"]:
+        if typ == "int":
+            values[key] = st.number_input(label, min_value=0, value=int(default), step=1, key=f"sim_{key}")
+        elif typ == "float":
+            values[key] = st.number_input(label, min_value=0.0, value=float(default), step=0.01, key=f"sim_{key}")
+        elif typ == "bool":
+            values[key] = st.checkbox(label, value=bool(default), key=f"sim_{key}")
+        else:
+            st.warning(f"Tipo no soportado: {typ} en {key}")
+    return values
+
+def build_simulador():
+    st.subheader("Simulador (por Cargo)")
+
+    cargo = st.selectbox("Selecciona el cargo", list(SIM_ROLES.keys()))
+    role_def = SIM_ROLES[cargo]
+    currency = role_def.get("currency", "COP")
+
+    st.markdown("#### Parámetros")
+    x = render_inputs(role_def)
+
+    if st.button("Calcular", type="primary"):
+        gate_ok = role_def.get("gate", lambda _: True)(x)
+        res = role_def["calc"](x)
+
+        # Aplica gate
+        scope = role_def.get("gate_scope", "all")
+        if not gate_ok:
+            if scope == "desem_only" and "actualizaciones" in res:
+                # Solo tumba la comisión por desembolsos
+                for k in list(res.keys()):
+                    if k in ["comision_desem", "comision_mes", "bono_trim"]:
+                        res[k] = 0
+            else:
+                # tumba todo lo variable
+                for k in list(res.keys()):
+                    res[k] = 0
+
+        # Recalcula total si no venía
+        if "total" in res:
+            # suma todo excepto 'total'
+            res["total"] = sum(v for k, v in res.items() if k != "total" and isinstance(v, (int, float)))
+
+        st.markdown("#### Resultados")
+        cols = st.columns(min(4, len(res)))
+        for i, (k, v) in enumerate(res.items()):
+            cols[i % len(cols)].metric(k.replace("_", " ").title(), fmt_money(float(v), currency))
+
+        if not gate_ok:
+            st.warning("No cumple condiciones de calidad/garantía → se ajustó el pago según reglas del cargo.")
+
+# -------------------------
+# MAIN
+# -------------------------
+def main():
+    st.title("Viventa – Histórico & Simulador 2026")
+
+    tab1, tab2 = st.tabs(["Histórico", "Simulador"])
+
+    with tab1:
+        build_historico()
+
+    with tab2:
+        build_simulador()
 
 if __name__ == "__main__":
-    build_historico_nomina()
+    main()
