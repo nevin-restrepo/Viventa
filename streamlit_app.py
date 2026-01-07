@@ -1,441 +1,238 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import numpy as np
 
-# ---------------------------------------------------
-# CONFIGURACIÓN BÁSICA
-# ---------------------------------------------------
-st.set_page_config(page_title="Dashboard & Simulador Viventa", layout="wide")
+st.set_page_config(page_title="Hoja1", layout="wide")
 
-# Constantes generales
-TASA_USD = 3800.0   # TRM usada para histórico y simulador
-TASA_EUR = 4424.0
-TARIFA_SV_USD = 500.0  # valor estándar de una SV en el simulador
+FILE_PATH = "data/HdePagos.xlsx"
+
+MONEY_COLS = [
+    "Total Salario Basico USD",
+    "Total PPSS Salario Basico USD",
+    "Total Prestaciones Sociales USD",
+    "Total Comisiones Vivecasa USD",
+    "Total Comisiones Viveprestamo USD",
+    "Total Bonos y Premios USD",
+    "Total Total Nomina USD",
+]
+
+DIM_COLS = ["Periodo", "Empleador", "Nick Name", "Cargo", "Total Activos"]
 
 
-# ---------------------------------------------------
-# CARGA DE DATOS HISTÓRICOS (DASHBOARD)
-# ---------------------------------------------------
+# -------------------------
+# PARSEO PERIODO (January 2024 -> fecha)
+# -------------------------
+MONTH_MAP_EN = {
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12
+}
+MONTH_MAP_ES = {
+    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
+    "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12
+}
+
+def parse_periodo_to_date(s: str):
+    """
+    Intenta convertir 'January 2024' o 'Enero 2024' a Timestamp del primer día del mes.
+    Si ya es fecha (2024-01-01 o similar), también lo intenta parsear.
+    """
+    if s is None or (isinstance(s, float) and np.isnan(s)):
+        return pd.NaT
+    txt = str(s).strip()
+
+    # 1) Intento directo (por si viene como fecha o '2024-01')
+    dt = pd.to_datetime(txt, errors="coerce")
+    if not pd.isna(dt):
+        # normaliza al 1 del mes
+        return pd.Timestamp(dt.year, dt.month, 1)
+
+    # 2) Formato "Mes Año"
+    parts = txt.replace("-", " ").replace("/", " ").split()
+    if len(parts) >= 2:
+        mes = parts[0].lower()
+        anio = parts[1]
+        try:
+            y = int(anio)
+        except:
+            return pd.NaT
+
+        m = MONTH_MAP_EN.get(mes) or MONTH_MAP_ES.get(mes)
+        if m:
+            return pd.Timestamp(y, m, 1)
+
+    return pd.NaT
+
+
+def fmt_usd(x: float) -> str:
+    return f"${x:,.2f} USD"
+
+
+# -------------------------
+# CARGA + LIMPIEZA
+# -------------------------
 @st.cache_data
-def load_data():
-    """Carga el CSV histórico en COP para el dashboard."""
-    df = pd.read_csv("data/datos.csv")
+def load_nomina():
+    df = pd.read_excel(FILE_PATH)
 
-    # Columnas numéricas en COP
-    num_cols = ["SV_Comision", "VC_Comision", "Trimestral", "Salario"]
-    for col in num_cols:
-        df[col] = (
-            df[col]
-            .astype(str)
-            .str.replace(".", "", regex=False)
-            .str.replace(",", "", regex=False)
-        )
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    df.columns = [c.strip() for c in df.columns]
+    df = df.replace(r"^\s*$", np.nan, regex=True)
+
+    # Limpia dimensiones
+    for c in ["Periodo", "Empleador", "Nick Name", "Cargo"]:
+        if c in df.columns:
+            df[c] = df[c].astype(str).str.strip()
+
+    # Parse Periodo a fecha para ordenar y filtrar por rango
+    if "Periodo" in df.columns:
+        df["Periodo_dt"] = df["Periodo"].apply(parse_periodo_to_date)
+    else:
+        df["Periodo_dt"] = pd.NaT
+
+    # Convierte numéricos
+    for c in MONEY_COLS + ["Total Activos"]:
+        if c in df.columns:
+            df[c] = (
+                df[c]
+                .astype(str)
+                .str.replace(",", "", regex=False)
+                .str.replace("$", "", regex=False)
+                .replace("nan", np.nan)
+            )
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
 
     return df
 
 
-# ---------------------------------------------------
-# FUNCIONES COMUNES DE MONEDA
-# ---------------------------------------------------
-def convertir_desde_cop(valor_cop, moneda):
-    """Convierte un valor en COP a la moneda seleccionada."""
-    if moneda == "COP":
-        return valor_cop
-    elif moneda == "USD":
-        return valor_cop / TASA_USD
-    elif moneda == "EUR":
-        return valor_cop / TASA_EUR
-    return valor_cop
+# -------------------------
+# APP
+# -------------------------
+def build_historico_nomina():
+    df = load_nomina()
 
+    required = {"Periodo", "Empleador", "Nick Name", "Cargo", "Total Total Nomina USD"}
+    missing = required - set(df.columns)
+    if missing:
+        st.error(f"Faltan columnas requeridas: {missing}")
+        return
 
-def formato_moneda(valor, moneda):
-    """Devuelve un string formateado con la moneda."""
-    if moneda == "COP":
-        return f"${valor:,.0f} COP"
+    st.title("Histórico de pagos (USD)")
+    st.subheader("Consulta por Cargo → Persona")
+
+    # ---- Filtros ----
+    st.sidebar.subheader("Filtros")
+
+    cargos = sorted(df["Cargo"].dropna().unique())
+    cargo_sel = st.sidebar.selectbox("Cargo", cargos, key="cargo_sel")
+
+    df_c = df[df["Cargo"] == cargo_sel].copy()
+
+    personas = sorted(df_c["Nick Name"].dropna().unique())
+    persona_sel = st.sidebar.selectbox("Nick Name", personas, key="persona_sel")
+
+    df_p = df_c[df_c["Nick Name"] == persona_sel].copy()
+
+    # (Opcional) empleador
+    empleadores = sorted(df_p["Empleador"].dropna().unique())
+    if len(empleadores) > 1:
+        emp_sel = st.sidebar.multiselect("Empleador", empleadores, default=empleadores, key="emp_sel")
+        df_p = df_p[df_p["Empleador"].isin(emp_sel)].copy()
+
+    # ---- Ajuste #2: filtro por rango de periodos (ordenado por Periodo_dt) ----
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Rango de periodos")
+
+    # Lista de periodos ordenada por fecha parseada
+    # (si algunos Periodo_dt quedan NaT, van al final)
+    periodos = (
+        df_p[["Periodo", "Periodo_dt"]]
+        .drop_duplicates()
+        .sort_values(["Periodo_dt", "Periodo"], na_position="last")
+        .reset_index(drop=True)
+    )
+
+    if periodos.empty:
+        st.warning("No hay periodos para los filtros seleccionados.")
+        return
+
+    # Si hay fechas válidas, habilita rango
+    has_dt = periodos["Periodo_dt"].notna().any()
+
+    if has_dt:
+        # Rango con select_slider usando etiquetas Periodo, pero ordenadas
+        labels = periodos["Periodo"].tolist()
+        start_label, end_label = st.sidebar.select_slider(
+            "Desde / Hasta",
+            options=labels,
+            value=(labels[0], labels[-1]),
+            key="periodo_rango",
+        )
+
+        # Filtra por Periodo_dt usando el dt del label seleccionado
+        start_dt = periodos.loc[periodos["Periodo"] == start_label, "Periodo_dt"].iloc[0]
+        end_dt = periodos.loc[periodos["Periodo"] == end_label, "Periodo_dt"].iloc[0]
+
+        if pd.isna(start_dt) or pd.isna(end_dt):
+            # Si algo quedó NaT, cae a filtro por etiqueta
+            idx1 = labels.index(start_label)
+            idx2 = labels.index(end_label)
+            selected_labels = labels[min(idx1, idx2): max(idx1, idx2) + 1]
+            df_p = df_p[df_p["Periodo"].isin(selected_labels)].copy()
+        else:
+            df_p = df_p[(df_p["Periodo_dt"] >= start_dt) & (df_p["Periodo_dt"] <= end_dt)].copy()
     else:
-        return f"${valor:,.0f} {moneda}"
+        # fallback: multiselect simple si no se pudo parsear nada
+        labels = periodos["Periodo"].tolist()
+        selected_labels = st.sidebar.multiselect("Selecciona periodos", labels, default=labels, key="periodo_multi")
+        df_p = df_p[df_p["Periodo"].isin(selected_labels)].copy()
 
-
-# ---------------------------------------------------
-# MÓDULO 1: DASHBOARD HISTÓRICO
-# ---------------------------------------------------
-def build_dashboard():
-    df = load_data()
-
-    st.subheader("Dashboard histórico de compensación")
-
-    # --- Filtros en sidebar ---
-    moneda = st.sidebar.radio(
-        "Moneda de visualización (histórico)",
-        ["COP", "USD", "EUR"],
-        index=0,
-        key="db_moneda",
-    )
-
-    años = sorted(df["Año"].unique())
-    año_sel = st.sidebar.selectbox("Año", años, key="db_ano")
-
-    meses = sorted(df[df["Año"] == año_sel]["Mes"].unique())
-    mes_ini, mes_fin = st.sidebar.select_slider(
-        "Rango de meses (histórico)",
-        options=meses,
-        value=(min(meses), max(meses)),
-        key="db_rango_meses",
-    )
-
-    df_filt = df[(df["Año"] == año_sel) & (df["Mes"].between(mes_ini, mes_fin))].copy()
-    df_filt = df_filt.sort_values("Mes")
-
-    if df_filt.empty:
+    if df_p.empty:
         st.warning("No hay datos para el rango seleccionado.")
         return
 
-    st.caption(
-        f"Mostrando histórico en **{moneda}**. Meses: {mes_ini}–{mes_fin}. "
-        f"(TRM fija: USD = {TASA_USD:,.0f} COP, EUR = {TASA_EUR:,.0f} COP)."
-    )
+    # ---- Ajuste #1: orden cronológico real en la vista ----
+    df_p = df_p.sort_values(["Periodo_dt", "Periodo"], na_position="last")
 
-    # --- KPIs acumulados ---
-    total_sv_unid = df_filt["SV_Unidades"].sum()
-    total_sv_com_cop = df_filt["SV_Comision"].sum()
-    total_vc_unid = df_filt["VC_Unidades"].sum()
-    total_vc_com_cop = df_filt["VC_Comision"].sum()
-    total_tri_cop = df_filt["Trimestral"].sum()
-    total_var_cop = total_sv_com_cop + total_vc_com_cop + total_tri_cop
-
-    total_sv_com = convertir_desde_cop(total_sv_com_cop, moneda)
-    total_vc_com = convertir_desde_cop(total_vc_com_cop, moneda)
-    total_tri = convertir_desde_cop(total_tri_cop, moneda)
-    total_var = convertir_desde_cop(total_var_cop, moneda)
+    # ---- KPIs ----
+    total_nomina = df_p["Total Total Nomina USD"].sum()
+    total_basico = df_p["Total Salario Basico USD"].sum() if "Total Salario Basico USD" in df_p.columns else 0
+    total_prest = df_p["Total Prestaciones Sociales USD"].sum() if "Total Prestaciones Sociales USD" in df_p.columns else 0
+    total_vc = df_p["Total Comisiones Vivecasa USD"].sum() if "Total Comisiones Vivecasa USD" in df_p.columns else 0
+    total_vp = df_p["Total Comisiones Viveprestamo USD"].sum() if "Total Comisiones Viveprestamo USD" in df_p.columns else 0
+    total_bonos = df_p["Total Bonos y Premios USD"].sum() if "Total Bonos y Premios USD" in df_p.columns else 0
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("SV Unidades (acum.)", int(total_sv_unid))
-    c2.metric("SV Comisión (acum.)", formato_moneda(total_sv_com, moneda))
-    c3.metric("VC Unidades (acum.)", int(total_vc_unid))
-    c4.metric("VC Comisión (acum.)", formato_moneda(total_vc_com, moneda))
-    c5.metric("Variable total (acum.)", formato_moneda(total_var, moneda))
+    c1.metric("Total Nómina", fmt_usd(total_nomina))
+    c2.metric("Salario Básico", fmt_usd(total_basico))
+    c3.metric("Comisiones", fmt_usd(total_vc + total_vp))
+    c4.metric("Bonos y Premios", fmt_usd(total_bonos))
+    c5.metric("Prestaciones", fmt_usd(total_prest))
+
+    st.caption(f"**Cargo:** {cargo_sel}  |  **Persona:** {persona_sel}")
 
     st.markdown("---")
 
-    # --- Data para gráficos ---
-    df_plot = df_filt.copy()
-    df_plot["SV_Comision_conv"] = df_plot["SV_Comision"].apply(
-        lambda v: convertir_desde_cop(v, moneda)
+    # ---- Resumen por periodo ----
+    st.markdown("### Resumen por periodo")
+    sum_cols = [c for c in MONEY_COLS if c in df_p.columns]
+    resumen = (
+        df_p.groupby(["Periodo", "Periodo_dt"], as_index=False)[sum_cols]
+        .sum(numeric_only=True)
+        .sort_values(["Periodo_dt", "Periodo"], na_position="last")
+        .drop(columns=["Periodo_dt"])
     )
-    df_plot["VC_Comision_conv"] = df_plot["VC_Comision"].apply(
-        lambda v: convertir_desde_cop(v, moneda)
+    st.dataframe(resumen)
+
+    st.markdown("### Detalle")
+    show_cols = [c for c in DIM_COLS if c in df_p.columns] + sum_cols
+    st.dataframe(df_p[show_cols])
+
+    st.download_button(
+        "Descargar detalle filtrado (CSV)",
+        data=df_p.drop(columns=["Periodo_dt"], errors="ignore").to_csv(index=False).encode("utf-8"),
+        file_name=f"HdePagos_{persona_sel}.csv",
+        mime="text/csv",
     )
-
-    colA, colB = st.columns(2)
-
-    with colA:
-        st.subheader("Servicio Viventa – Unidades por mes")
-        fig_sv_u = px.bar(
-            df_plot,
-            x="NombreMes",
-            y="SV_Unidades",
-            text="SV_Unidades",
-            labels={"NombreMes": "Mes", "SV_Unidades": "Unidades"},
-        )
-        st.plotly_chart(fig_sv_u, use_container_width=True, key="db_sv_units")
-
-        st.subheader(f"Servicio Viventa – Comisión por mes ({moneda})")
-        fig_sv_c = px.line(
-            df_plot,
-            x="NombreMes",
-            y="SV_Comision_conv",
-            markers=True,
-            labels={"NombreMes": "Mes", "SV_Comision_conv": f"Comisión ({moneda})"},
-        )
-        st.plotly_chart(fig_sv_c, use_container_width=True, key="db_sv_comision")
-
-    with colB:
-        st.subheader("Vivecasa – Unidades por mes")
-        fig_vc_u = px.bar(
-            df_plot,
-            x="NombreMes",
-            y="VC_Unidades",
-            text="VC_Unidades",
-            labels={"NombreMes": "Mes", "VC_Unidades": "Unidades"},
-        )
-        st.plotly_chart(fig_vc_u, use_container_width=True, key="db_vc_units")
-
-        st.subheader(f"Vivecasa – Comisión por mes ({moneda})")
-        fig_vc_c = px.line(
-            df_plot,
-            x="NombreMes",
-            y="VC_Comision_conv",
-            markers=True,
-            labels={"NombreMes": "Mes", "VC_Comision_conv": f"Comisión ({moneda})"},
-        )
-        st.plotly_chart(fig_vc_c, use_container_width=True, key="db_vc_comision")
-
-    st.markdown("### Detalle filtrado (valores originales en COP)")
-    st.dataframe(df_filt)
-
-
-# ---------------------------------------------------
-# MÓDULO 2: SIMULADOR VIVENTA 2025
-# ---------------------------------------------------
-# Tramos SV:
-# 0–8 SV   -> 0%
-# 9–11 SV  -> 8%
-# 12–16 SV -> 18%
-# 17+ SV   -> 25%
-
-def get_pct_sv(num_sv: int) -> float:
-    """Devuelve el % de comisión según el número de SV facturadas."""
-    if num_sv <= 8:
-        return 0.0
-    elif num_sv <= 11:
-        return 0.08
-    elif num_sv <= 16:
-        return 0.18
-    else:
-        return 0.25
-
-
-def calcular_comision_sv(num_sv: int, descuento: float, trm: float):
-    """
-    Comisión SV en el simulador:
-
-    - La cantidad de SV **solo** define el % de comisión (tramo).
-    - La base es: 500 USD - descuento.
-    - Fórmula en COP:
-        valor_sv_neto_usd = 500 * (1 - descuento)
-        valor_sv_neto_cop = valor_sv_neto_usd * trm
-        comisión_SV = valor_sv_neto_cop * %comisión
-
-    ❗ No se multiplica por la cantidad de SV.
-    """
-    pct = get_pct_sv(num_sv)
-    valor_sv_neto_usd = TARIFA_SV_USD * (1.0 - descuento)
-    valor_sv_neto_cop = valor_sv_neto_usd * trm
-
-    comision_total = valor_sv_neto_cop * pct
-    return comision_total, pct, valor_sv_neto_cop
-
-
-def calcular_comision_vivecasa(
-    num_vivecasas: int,
-    tipo_esquema: str,
-    comision_fija_cop=None,
-    tarifa_vivecasa_cop=None,
-    pct_vivecasa=None,
-):
-    """Calcula la comisión por Vivecasas según el esquema elegido."""
-    if num_vivecasas <= 0:
-        return 0.0
-
-    if tipo_esquema == "Fija por unidad (COP)":
-        return num_vivecasas * (comision_fija_cop or 0.0)
-
-    tarifa_vivecasa_cop = tarifa_vivecasa_cop or 0.0
-    pct_vivecasa = pct_vivecasa or 0.0
-    return num_vivecasas * tarifa_vivecasa_cop * pct_vivecasa
-
-
-def build_simulador():
-    st.subheader("Simulador de compensación comercial Viventa 2025")
-
-    st.write(
-        """
-        ### Reglas del simulador – Servicio Viventa (SV)
-
-        - Tarifa estándar SV: **500 USD**  
-        - TRM usada: **3.800 COP/USD**  
-        - El **descuento** se aplica al precio de 500 USD.  
-        - La **cantidad de SV solo determina el tramo de comisión (%), NO multiplica la fórmula.**
-
-        Fórmula de la comisión SV:
-
-        > Comisión SV mensual = 500 × (1 − descuento) × %comisión × TRM
-        """
-    )
-
-    # -------- ENTRADAS ----------
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Parámetros del simulador")
-
-    # SV
-    num_sv = st.sidebar.number_input(
-        "SV facturados",
-        min_value=0,
-        max_value=200,
-        value=0,   # inicia en 0
-        step=1,
-        key="num_sv",
-    )
-
-    descuento = st.sidebar.slider(
-        "Descuento promedio SV (0 a 50%)",
-        min_value=0.0,
-        max_value=0.50,
-        value=0.0,
-        step=0.01,
-        key="desc_sv",
-    )
-
-    # Vivecasa
-    num_vivecasas = st.sidebar.number_input(
-        "Vivecasas cerradas",
-        min_value=0,
-        max_value=200,
-        value=0,   # inicia en 0
-        step=1,
-        key="num_vc",
-    )
-
-    tipo_esquema_vc = st.sidebar.selectbox(
-        "Esquema Vivecasa",
-        ["Fija por unidad (COP)", "% sobre tarifa (COP)"],
-        key="tipo_vc",
-    )
-
-    comision_fija_cop = None
-    tarifa_vivecasa_cop = None
-    pct_vivecasa = None
-
-    if tipo_esquema_vc == "Fija por unidad (COP)":
-        comision_fija_cop = st.sidebar.number_input(
-            "Comisión fija por Vivecasa (COP)",
-            min_value=0.0,
-            value=0.0,   # inicia en 0
-            step=100_000.0,
-            key="vc_fija",
-        )
-    else:
-        tarifa_vivecasa_cop = st.sidebar.number_input(
-            "Tarifa promedio Vivecasa (COP)",
-            min_value=0.0,
-            value=0.0,   # inicia en 0
-            step=500_000.0,
-            key="vc_tarifa",
-        )
-        pct_vivecasa = st.sidebar.slider(
-            "% comisión Vivecasa (0 a 20%)",
-            min_value=0.0,
-            max_value=0.20,
-            value=0.0,   # inicia en 0
-            step=0.01,
-            key="vc_pct",
-        )
-
-    # Fijo y bono
-    fijo_mensual = st.sidebar.number_input(
-        "Fijo mensual (COP)",
-        min_value=0.0,
-        value=0.0,    # inicia en 0
-        step=100_000.0,
-        key="fijo",
-    )
-    bono_mensual = st.sidebar.number_input(
-        "Bono mensual (COP)",
-        min_value=0.0,
-        value=0.0,    # inicia en 0
-        step=50_000.0,
-        key="bono",
-    )
-
-    # -------- CÁLCULOS ----------
-    com_sv_total, pct_sv, valor_sv_neto_cop = calcular_comision_sv(
-        num_sv=num_sv,
-        descuento=descuento,
-        trm=TASA_USD,   # 3.800
-    )
-
-    com_vc_total = calcular_comision_vivecasa(
-        num_vivecasas=num_vivecasas,
-        tipo_esquema=tipo_esquema_vc,
-        comision_fija_cop=comision_fija_cop,
-        tarifa_vivecasa_cop=tarifa_vivecasa_cop,
-        pct_vivecasa=pct_vivecasa,
-    )
-
-    total_variable = com_sv_total + com_vc_total
-    total_mensual = fijo_mensual + bono_mensual + total_variable
-
-    # -------- MÉTRICAS ----------
-    st.markdown("### Resultado mensual simulado")
-
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Fijo", f"${fijo_mensual:,.0f}")
-    m2.metric("Bono", f"${bono_mensual:,.0f}")
-    m3.metric("Var. SV", f"${com_sv_total:,.0f}")
-    m4.metric("Var. Vivecasas", f"${com_vc_total:,.0f}")
-    m5.metric("Total mensual", f"${total_mensual:,.0f}")
-
-    # -------- TABLA DETALLE ----------
-    st.markdown("### Detalle de cálculo")
-
-    detalle = pd.DataFrame({
-        "Concepto": [
-            "SV facturados (solo define tramo)",
-            "Descuento promedio SV",
-            "% comisión SV según tramo",
-            "Tarifa neta SV (COP)",
-            "Comisión SV mensual (COP)",
-            "Vivecasas cerradas",
-            "Comisión total Vivecasa (COP)",
-            "Fijo (COP)",
-            "Bono (COP)",
-            "Total Variable (COP)",
-            "Total Mensual (COP)",
-        ],
-        "Valor": [
-            num_sv,
-            f"{descuento * 100:.1f} %",
-            f"{pct_sv * 100:.1f} %",
-            f"{valor_sv_neto_cop:,.0f}",
-            f"{com_sv_total:,.0f}",
-            num_vivecasas,
-            f"{com_vc_total:,.0f}",
-            f"{fijo_mensual:,.0f}",
-            f"{bono_mensual:,.0f}",
-            f"{total_variable:,.0f}",
-            f"{total_mensual:,.0f}",
-        ],
-    })
-    st.table(detalle)
-
-    # -------- GRÁFICO ----------
-    st.markdown("### Fijo vs Variable")
-
-    barras = pd.DataFrame({
-        "Componente": ["Fijo", "Variable SV", "Variable VC"],
-        "Valor": [fijo_mensual, com_sv_total, com_vc_total],
-    })
-
-    fig = px.bar(
-        barras,
-        x="Componente",
-        y="Valor",
-        text="Valor",
-        labels={"Valor": "Valor (COP)"},
-    )
-    fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
-    st.plotly_chart(fig, use_container_width=True)
-
-
-# ---------------------------------------------------
-# MAIN
-# ---------------------------------------------------
-def main():
-    st.title("Viventa – Dashboard & Simulador de Compensación 2025")
-
-    modo = st.sidebar.radio(
-        "¿Qué quieres usar?",
-        ["Dashboard histórico", "Simulador 2025"],
-        index=0,
-        key="modo_app",
-    )
-
-    if modo == "Dashboard histórico":
-        build_dashboard()
-    else:
-        build_simulador()
 
 
 if __name__ == "__main__":
-    main()
+    build_historico_nomina()
