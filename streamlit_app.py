@@ -18,7 +18,6 @@ MONEY_COLS = [
 
 DIM_COLS = ["Periodo", "Empleador", "Nick Name", "Cargo", "Total Activos"]
 
-
 # -------------------------
 # PARSEO PERIODO (January 2024 -> fecha)
 # -------------------------
@@ -33,8 +32,8 @@ MONTH_MAP_ES = {
 
 def parse_periodo_to_date(s: str):
     """
-    Intenta convertir 'January 2024' o 'Enero 2024' a Timestamp del primer día del mes.
-    Si ya es fecha (2024-01-01 o similar), también lo intenta parsear.
+    Convierte 'January 2024' / 'Enero 2024' a Timestamp del 1er día del mes.
+    Si ya es fecha (2024-01-01 o similar), también lo parsea.
     """
     if s is None or (isinstance(s, float) and np.isnan(s)):
         return pd.NaT
@@ -43,7 +42,6 @@ def parse_periodo_to_date(s: str):
     # 1) Intento directo (por si viene como fecha o '2024-01')
     dt = pd.to_datetime(txt, errors="coerce")
     if not pd.isna(dt):
-        # normaliza al 1 del mes
         return pd.Timestamp(dt.year, dt.month, 1)
 
     # 2) Formato "Mes Año"
@@ -53,7 +51,7 @@ def parse_periodo_to_date(s: str):
         anio = parts[1]
         try:
             y = int(anio)
-        except:
+        except Exception:
             return pd.NaT
 
         m = MONTH_MAP_EN.get(mes) or MONTH_MAP_ES.get(mes)
@@ -72,7 +70,7 @@ def fmt_usd(x: float) -> str:
 # -------------------------
 @st.cache_data
 def load_nomina():
-    df = pd.read_excel(FILE_PATH)
+    df = pd.read_excel(FILE_PATH)  # requiere openpyxl instalado
 
     df.columns = [c.strip() for c in df.columns]
     df = df.replace(r"^\s*$", np.nan, regex=True)
@@ -134,15 +132,15 @@ def build_historico_nomina():
     # (Opcional) empleador
     empleadores = sorted(df_p["Empleador"].dropna().unique())
     if len(empleadores) > 1:
-        emp_sel = st.sidebar.multiselect("Empleador", empleadores, default=empleadores, key="emp_sel")
+        emp_sel = st.sidebar.multiselect(
+            "Empleador", empleadores, default=empleadores, key="emp_sel"
+        )
         df_p = df_p[df_p["Empleador"].isin(emp_sel)].copy()
 
-    # ---- Ajuste #2: filtro por rango de periodos (ordenado por Periodo_dt) ----
+    # ---- Filtro por rango de periodos (ordenado por Periodo_dt) ----
     st.sidebar.markdown("---")
     st.sidebar.subheader("Rango de periodos")
 
-    # Lista de periodos ordenada por fecha parseada
-    # (si algunos Periodo_dt quedan NaT, van al final)
     periodos = (
         df_p[["Periodo", "Periodo_dt"]]
         .drop_duplicates()
@@ -154,11 +152,9 @@ def build_historico_nomina():
         st.warning("No hay periodos para los filtros seleccionados.")
         return
 
-    # Si hay fechas válidas, habilita rango
     has_dt = periodos["Periodo_dt"].notna().any()
 
     if has_dt:
-        # Rango con select_slider usando etiquetas Periodo, pero ordenadas
         labels = periodos["Periodo"].tolist()
         start_label, end_label = st.sidebar.select_slider(
             "Desde / Hasta",
@@ -167,12 +163,10 @@ def build_historico_nomina():
             key="periodo_rango",
         )
 
-        # Filtra por Periodo_dt usando el dt del label seleccionado
         start_dt = periodos.loc[periodos["Periodo"] == start_label, "Periodo_dt"].iloc[0]
         end_dt = periodos.loc[periodos["Periodo"] == end_label, "Periodo_dt"].iloc[0]
 
         if pd.isna(start_dt) or pd.isna(end_dt):
-            # Si algo quedó NaT, cae a filtro por etiqueta
             idx1 = labels.index(start_label)
             idx2 = labels.index(end_label)
             selected_labels = labels[min(idx1, idx2): max(idx1, idx2) + 1]
@@ -180,51 +174,38 @@ def build_historico_nomina():
         else:
             df_p = df_p[(df_p["Periodo_dt"] >= start_dt) & (df_p["Periodo_dt"] <= end_dt)].copy()
     else:
-        # fallback: multiselect simple si no se pudo parsear nada
         labels = periodos["Periodo"].tolist()
-        selected_labels = st.sidebar.multiselect("Selecciona periodos", labels, default=labels, key="periodo_multi")
+        selected_labels = st.sidebar.multiselect(
+            "Selecciona periodos", labels, default=labels, key="periodo_multi"
+        )
         df_p = df_p[df_p["Periodo"].isin(selected_labels)].copy()
 
     if df_p.empty:
         st.warning("No hay datos para el rango seleccionado.")
         return
 
-    # ---- Ajuste #1: orden cronológico real en la vista ----
+    # ---- Orden cronológico real ----
     df_p = df_p.sort_values(["Periodo_dt", "Periodo"], na_position="last")
 
-    # ---- KPIs ----
-    total_nomina = df_p["Total Total Nomina USD"].sum()
+    # ---- Totales base para KPIs ----
     total_basico = df_p["Total Salario Basico USD"].sum() if "Total Salario Basico USD" in df_p.columns else 0
-    total_prest = df_p["Total Prestaciones Sociales USD"].sum() if "Total Prestaciones Sociales USD" in df_p.columns else 0
     total_vc = df_p["Total Comisiones Vivecasa USD"].sum() if "Total Comisiones Vivecasa USD" in df_p.columns else 0
     total_vp = df_p["Total Comisiones Viveprestamo USD"].sum() if "Total Comisiones Viveprestamo USD" in df_p.columns else 0
     total_bonos = df_p["Total Bonos y Premios USD"].sum() if "Total Bonos y Premios USD" in df_p.columns else 0
 
-c1, c2, c3, c4, c5, c6 = st.columns(6)
+    prestaciones_total = (
+        df_p["Total PPSS Salario Basico USD"].sum() if "Total PPSS Salario Basico USD" in df_p.columns else 0
+    ) + (
+        df_p["Total Prestaciones Sociales USD"].sum() if "Total Prestaciones Sociales USD" in df_p.columns else 0
+    )
 
-c1.metric("Total Nómina", fmt_usd(total_nomina))
-c2.metric("Salario Básico", fmt_usd(total_basico))
-
-c3.metric(
-    "Comisiones Vivecasa",
-    fmt_usd(total_vc)
-)
-
-c4.metric(
-    "Comisiones Viveprestamo",
-    fmt_usd(total_vp)
-)
-
-c5.metric(
-    "Bonos y Premios",
-    fmt_usd(total_bonos)
-)
-
-c6.metric(
-    "Prestaciones Sociales",
-    fmt_usd(total_prest)
-)
-
+    # ---- KPIs (nombres simplificados) ----
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Salario Básico", fmt_usd(total_basico))
+    c2.metric("Prestaciones", fmt_usd(prestaciones_total))
+    c3.metric("Vivecasa", fmt_usd(total_vc))
+    c4.metric("Viveprestamo", fmt_usd(total_vp))
+    c5.metric("Bonos", fmt_usd(total_bonos))
 
     st.caption(f"**Cargo:** {cargo_sel}  |  **Persona:** {persona_sel}")
 
@@ -232,7 +213,10 @@ c6.metric(
 
     # ---- Resumen por periodo ----
     st.markdown("### Resumen por periodo")
+
+    # Para el resumen, dejamos las columnas originales + Total Nómina (si existe)
     sum_cols = [c for c in MONEY_COLS if c in df_p.columns]
+
     resumen = (
         df_p.groupby(["Periodo", "Periodo_dt"], as_index=False)[sum_cols]
         .sum(numeric_only=True)
@@ -241,6 +225,7 @@ c6.metric(
     )
     st.dataframe(resumen)
 
+    # ---- Detalle ----
     st.markdown("### Detalle")
     show_cols = [c for c in DIM_COLS if c in df_p.columns] + sum_cols
     st.dataframe(df_p[show_cols])
