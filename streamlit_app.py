@@ -200,12 +200,31 @@ def build_historico_nomina():
     total_vp = df_p["Total Comisiones Viveprestamo USD"].sum() if "Total Comisiones Viveprestamo USD" in df_p.columns else 0
     total_bonos = df_p["Total Bonos y Premios USD"].sum() if "Total Bonos y Premios USD" in df_p.columns else 0
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Total Nómina", fmt_usd(total_nomina))
-    c2.metric("Salario Básico", fmt_usd(total_basico))
-    c3.metric("Comisiones", fmt_usd(total_vc + total_vp))
-    c4.metric("Bonos y Premios", fmt_usd(total_bonos))
-    c5.metric("Prestaciones", fmt_usd(total_prest))
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+
+c1.metric("Total Nómina", fmt_usd(total_nomina))
+c2.metric("Salario Básico", fmt_usd(total_basico))
+
+c3.metric(
+    "Comisiones Vivecasa",
+    fmt_usd(total_vc)
+)
+
+c4.metric(
+    "Comisiones Viveprestamo",
+    fmt_usd(total_vp)
+)
+
+c5.metric(
+    "Bonos y Premios",
+    fmt_usd(total_bonos)
+)
+
+c6.metric(
+    "Prestaciones Sociales",
+    fmt_usd(total_prest)
+)
+
 
     st.caption(f"**Cargo:** {cargo_sel}  |  **Persona:** {persona_sel}")
 
