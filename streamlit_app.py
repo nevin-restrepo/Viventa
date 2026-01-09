@@ -63,7 +63,7 @@ def fmt_usd(x: float) -> str:
 
 
 def fmt_money(x: float, currency: str = "COP") -> str:
-    """Formatea moneda para el simulador (COP/USD/EUR)."""
+    """Formatea moneda para el simulador."""
     if currency == "USD":
         return f"${x:,.2f} USD"
     if currency == "EUR":
@@ -216,6 +216,20 @@ def gate_all_ok(**gates) -> bool:
     return all(bool(v) for v in gates.values())
 
 
+# Metas Gerente Desembolso (100% y 95%)
+GER_DES_META_100 = {
+    "Enero": 278, "Febrero": 298, "Marzo": 338, "Abril": 316, "Mayo": 318, "Junio": 297,
+    "Julio": 350, "Agosto": 330, "Septiembre": 360, "Octubre": 350, "Noviembre": 342, "Diciembre": 338,
+}
+GER_DES_META_95 = {
+    "Enero": 264, "Febrero": 283, "Marzo": 321, "Abril": 300, "Mayo": 302, "Junio": 282,
+    "Julio": 333, "Agosto": 314, "Septiembre": 342, "Octubre": 333, "Noviembre": 325, "Diciembre": 321,
+}
+
+# Metas Gerente Análisis (por trimestre, mensual)
+GER_ANALISIS_100 = {"Q1": 405, "Q2": 440, "Q3": 500, "Q4": 575}
+GER_ANALISIS_95 = {"Q1": 385, "Q2": 418, "Q3": 475, "Q4": 546}
+
 SIM_ROLES = {
     # --------- GESTORES ----------
     "Gestor de Crédito - UPF": {
@@ -303,6 +317,23 @@ SIM_ROLES = {
         ),
     },
 
+    # --------- LÍDER ANÁLISIS CRÉDITO ----------
+    "Líder de Análisis de Crédito": {
+        "currency": "COP",
+        "inputs": [
+            ("aprob_mes", "Aprobaciones (mes)", "int", 0),
+            ("carpetas_3dias", "% carpetas ≤ 3 días (0-1)", "float", 0.90),
+            ("radicado_ok", "% radicado aprobado (0-1)", "float", 0.90),
+        ],
+        "calc": lambda x: {
+            "Comisión mensual": calc_excedente(x["aprob_mes"], minimo=350, valor_unidad=10000),
+        },
+        "gate": lambda x: gate_all_ok(
+            carpetas=x["carpetas_3dias"] >= 0.90,
+            radicado=x["radicado_ok"] >= 0.90
+        ),
+    },
+
     # --------- LEGALIZACIÓN ----------
     "Analista de Legalización": {
         "currency": "COP",
@@ -325,22 +356,138 @@ SIM_ROLES = {
         ),
         "gate_scope": "desem_only"
     },
+
+    # --------- LÍDER DE DESEMBOLSOS ----------
+    "Líder de Desembolsos": {
+        "currency": "COP",
+        "inputs": [
+            ("desem_mes", "Desembolsos (mes)", "int", 0),
+            ("monitoreo", "% monitoreo (0-1)", "float", 0.95),
+            ("ans", "% ANS (0-1)", "float", 0.90),
+            ("prod_notas", "% productividad notas (0-1)", "float", 0.90),
+        ],
+        "calc": lambda x: {
+            "Comisión mensual": calc_excedente(x["desem_mes"], minimo=250, valor_unidad=10000),
+        },
+        "gate": lambda x: gate_all_ok(
+            monitoreo=x["monitoreo"] >= 0.95,
+            ans=x["ans"] >= 0.90,
+            prod=x["prod_notas"] >= 0.90
+        ),
+    },
+
+    # --------- GERENTE DE DESEMBOLSO ----------
+    "Gerente de Desembolso y Éxito del Cliente": {
+        "currency": "COP",
+        "inputs": [
+            ("mes", "Mes", "select", "Enero",
+             ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]),
+            ("desem_mes", "Desembolsos (mes)", "int", 0),
+        ],
+        "calc": lambda x: (lambda mes, n: {
+            "Fijo mensual": 10_000_000,
+            "Variable mensual": (2_000_000 if n >= GER_DES_META_100[mes] else (1_250_000 if n >= GER_DES_META_95[mes] else 0)),
+        })(x["mes"], x["desem_mes"]),
+        "gate": lambda x: True,
+    },
+
+    # --------- LÍDERES (CONVENIOS / USADA+UPF / NUEVA+VIVECASAS) ----------
+    "Líder de Convenios": {
+        "currency": "COP",
+        "inputs": [
+            ("aprob_mes", "Aprobaciones bancarias (mes)", "int", 0),
+            ("trim", "Trimestre", "select", "Q1", ["Q1","Q2","Q3","Q4"]),
+            ("aprob_trim", "Aprobaciones bancarias (trimestre)", "int", 0),
+            ("reviews_trim", "Reviews 5★ Google (trimestre)", "int", 0),
+        ],
+        "calc": lambda x: {
+            "Comisión mensual (aprob)": 1_000_000 if x["aprob_mes"] >= 85 else 0,
+            "Bono trimestral (aprob)": (
+                1_000_000 if (
+                    (x["trim"] == "Q1" and x["aprob_trim"] >= 250) or
+                    (x["trim"] == "Q2" and x["aprob_trim"] >= 275) or
+                    (x["trim"] == "Q3" and x["aprob_trim"] >= 275) or
+                    (x["trim"] == "Q4" and x["aprob_trim"] >= 300)
+                ) else 0
+            ),
+            "Bono trimestral (reviews)": 500_000 if x["reviews_trim"] >= 250 else 0,
+        },
+        "gate": lambda x: True,
+    },
+
+    "Líder de Vivienda Usada y UPF": {
+        "currency": "COP",
+        "inputs": [
+            ("aprob_mes", "Aprobaciones bancarias (mes)", "int", 0),
+            ("aprob_trim", "Aprobaciones bancarias (trimestre)", "int", 0),
+            ("reviews_trim", "Reviews 5★ Google (trimestre)", "int", 0),
+        ],
+        "calc": lambda x: {
+            "Comisión mensual (aprob)": 1_000_000 if x["aprob_mes"] >= 120 else 0,
+            "Bono trimestral (aprob)": 1_000_000 if x["aprob_trim"] >= 325 else 0,
+            "Bono trimestral (reviews)": 500_000 if x["reviews_trim"] >= 325 else 0,
+        },
+        "gate": lambda x: True,
+    },
+
+    "Líder de Vivienda Nueva y Vivecasas": {
+        "currency": "COP",
+        "inputs": [
+            ("aprob_mes_total", "Aprobaciones bancarias TOTAL (mes)", "int", 0),
+            ("aprob_mes_vivecasas", "Aprobaciones Vivecasas (mes)", "int", 0),
+            ("aprob_mes_nuevas", "Aprobaciones Nuevas (mes)", "int", 0),
+            ("aprob_trim", "Aprobaciones bancarias (trimestre)", "int", 0),
+            ("reviews_trim", "Reviews 5★ Google (trimestre)", "int", 0),
+        ],
+        "calc": lambda x: {
+            "Comisión mensual (aprob)": (
+                1_000_000 if x["aprob_mes_total"] >= 200
+                else (500_000 if (x["aprob_mes_vivecasas"] > 60 or x["aprob_mes_nuevas"] > 140) else 0)
+            ),
+            "Bono trimestral (aprob)": 1_000_000 if x["aprob_trim"] >= 575 else 0,
+            "Bono trimestral (reviews)": 500_000 if x["reviews_trim"] >= 500 else 0,
+        },
+        "gate": lambda x: True,
+    },
+
+    # --------- GERENTE ANÁLISIS (EUR) ----------
+    "Gerente de Análisis y Gestión de Crédito": {
+        "currency": "EUR",
+        "inputs": [
+            ("trim", "Trimestre", "select", "Q1", ["Q1","Q2","Q3","Q4"]),
+            ("aprob_mes", "Aprobaciones bancarias (mes)", "int", 0),
+        ],
+        "calc": lambda x: (lambda q, n: {
+            "Variable mensual": (700 if n >= GER_ANALISIS_100[q] else (450 if n >= GER_ANALISIS_95[q] else 0))
+        })(x["trim"], x["aprob_mes"]),
+        "gate": lambda x: True,
+    },
 }
 
 
 def render_inputs(role_def: dict) -> dict:
     values = {}
-    for key, label, typ, default in role_def["inputs"]:
+    for item in role_def["inputs"]:
+        # item puede venir de 4 o 5 elementos (para selects)
+        if len(item) == 4:
+            key, label, typ, default = item
+            options = None
+        else:
+            key, label, typ, default, options = item[0], item[1], item[2], item[3], item[4]
+
         if typ == "int":
-            values[key] = st.number_input(
-                label, min_value=0, value=int(default), step=1, key=f"sim_{key}"
-            )
+            values[key] = st.number_input(label, min_value=0, value=int(default), step=1, key=f"sim_{key}")
         elif typ == "float":
-            values[key] = st.number_input(
-                label, min_value=0.0, value=float(default), step=0.01, key=f"sim_{key}"
-            )
+            values[key] = st.number_input(label, min_value=0.0, value=float(default), step=0.01, key=f"sim_{key}")
         elif typ == "bool":
             values[key] = st.checkbox(label, value=bool(default), key=f"sim_{key}")
+        elif typ == "select":
+            if not options:
+                st.warning(f"Select sin opciones: {key}")
+                values[key] = default
+            else:
+                idx = options.index(default) if default in options else 0
+                values[key] = st.selectbox(label, options, index=idx, key=f"sim_{key}")
         else:
             st.warning(f"Tipo no soportado: {typ} en {key}")
     return values
@@ -363,13 +510,13 @@ def build_simulador():
 
         scope = role_def.get("gate_scope", "all")
         if not gate_ok:
-            if scope == "desem_only" and "Actualizaciones" in res:
-                # solo tumba comisión de desembolsos
-                if "Comisión desembolsos" in res:
-                    res["Comisión desembolsos"] = 0
+            if scope == "desem_only" and "Comisión desembolsos" in res:
+                res["Comisión desembolsos"] = 0
             else:
-                # tumba todo
                 for k in list(res.keys()):
+                    # si hay fijo, lo dejamos; si no, tumba todo
+                    if k.lower().startswith("fijo"):
+                        continue
                     res[k] = 0
 
         total = sum(float(v) for v in res.values() if isinstance(v, (int, float, np.integer, np.floating)))
