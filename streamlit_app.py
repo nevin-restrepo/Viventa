@@ -157,19 +157,21 @@ def build_historico():
 
     df_p = df_p.sort_values(["Periodo_dt", "Periodo"], na_position="last")
 
-    # KPIs simplificados (USD)
+    # KPIs (USD) + Total Nómina
+    total_nomina = df_p["Total Total Nomina USD"].sum() if "Total Total Nomina USD" in df_p.columns else 0
     total_basico = df_p["Total Salario Basico USD"].sum() if "Total Salario Basico USD" in df_p.columns else 0
     prestaciones = df_p["Total Prestaciones Sociales USD"].sum() if "Total Prestaciones Sociales USD" in df_p.columns else 0
     total_vc = df_p["Total Comisiones Vivecasa USD"].sum() if "Total Comisiones Vivecasa USD" in df_p.columns else 0
     total_vp = df_p["Total Comisiones Viveprestamo USD"].sum() if "Total Comisiones Viveprestamo USD" in df_p.columns else 0
     bonos = df_p["Total Bonos y Premios USD"].sum() if "Total Bonos y Premios USD" in df_p.columns else 0
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Salario Básico", fmt_usd(total_basico))
-    c2.metric("Prestaciones", fmt_usd(prestaciones))
-    c3.metric("Vivecasa", fmt_usd(total_vc))
-    c4.metric("Viveprestamo", fmt_usd(total_vp))
-    c5.metric("Bonos", fmt_usd(bonos))
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("Total Nómina", fmt_usd(total_nomina))
+    c2.metric("Salario Básico", fmt_usd(total_basico))
+    c3.metric("Prestaciones", fmt_usd(prestaciones))
+    c4.metric("Vivecasa", fmt_usd(total_vc))
+    c5.metric("Viveprestamo", fmt_usd(total_vp))
+    c6.metric("Bonos", fmt_usd(bonos))
 
     st.caption(f"Cargo: **{cargo_sel}**  |  Persona: **{persona_sel}**")
     st.divider()
